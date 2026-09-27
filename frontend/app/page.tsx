@@ -24,6 +24,7 @@ export default function Home() {
   const [tone, setTone] = useState<Tone>("energetic");
   const [duration, setDuration] = useState(18);
   const [language, setLanguage] = useState("en");
+  const [music, setMusic] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
 
   const [job, setJob] = useState<JobInfo | null>(null);
@@ -68,6 +69,7 @@ export default function Home() {
           duration_sec: duration,
           language,
           voice: "default",
+          music,
         });
       } else {
         if (files.length === 0) {
@@ -82,6 +84,7 @@ export default function Home() {
         fd.append("duration_sec", String(duration));
         fd.append("language", language);
         fd.append("voice", "default");
+        fd.append("music", String(music));
         files.forEach((f) => fd.append("images", f));
         created = await generateFromImages(fd);
       }
@@ -202,6 +205,25 @@ export default function Home() {
                 className="w-full accent-brand"
               />
             </Field>
+
+            <button
+              type="button"
+              onClick={() => setMusic((m) => !m)}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm"
+            >
+              <span className="font-medium text-white/80">🎵 Background music</span>
+              <span
+                className={`relative h-6 w-11 rounded-full transition ${
+                  music ? "bg-brand" : "bg-white/20"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
+                    music ? "left-[22px]" : "left-0.5"
+                  }`}
+                />
+              </span>
+            </button>
 
             <button
               onClick={handleGenerate}

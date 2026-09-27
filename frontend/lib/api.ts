@@ -37,6 +37,30 @@ export interface TopicPayload {
   music: boolean;
 }
 
+export interface Scene {
+  text: string;
+  narration: string;
+  visual_query: string;
+  duration_sec: number;
+}
+
+export interface Script {
+  title: string;
+  hook: string;
+  scenes: Scene[];
+  cta: string;
+}
+
+export interface ScriptDraft {
+  script: Script;
+  tone: Tone;
+  language: string;
+  voice: string;
+  music: boolean;
+  mode: "topic" | "image";
+  image_job_id: string | null;
+}
+
 export async function getProviders(): Promise<ProvidersInfo> {
   const r = await fetch("/api/providers", { cache: "no-store" });
   if (!r.ok) throw new Error("Failed to load providers");
@@ -62,5 +86,39 @@ export async function generateFromImages(form: FormData): Promise<JobInfo> {
 export async function getJob(id: string): Promise<JobInfo> {
   const r = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
   if (!r.ok) throw new Error("Job not found");
+  return r.json();
+}
+
+// --- Two-step editable workflow -------------------------------------------
+export async function scriptFromTopic(payload: TopicPayload): Promise<ScriptDraft> {
+  const r = await fetch("/api/script/topic", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`Script generation failed: ${r.status}`);
+  return r.json();
+}
+
+export async function scriptFromImages(form: FormData): Promise<ScriptDraft> {
+  const r = await fetch("/api/script/image", { method: "POST", body: form });
+  if (!r.ok) throw new Error(`Script generation failed: ${r.status}`);
+  return r.json();
+}
+
+export async function renderScript(draft: ScriptDraft): Promise<JobInfo> {
+  const r = await fetch("/api/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      script: draft.script,
+      tone: draft.tone,
+      language: draft.language,
+      voice: draft.voice,
+      music: draft.music,
+      image_job_id: draft.image_job_id,
+    }),
+  });
+  if (!r.ok) throw new Error(`Render failed: ${r.status}`);
   return r.json();
 }

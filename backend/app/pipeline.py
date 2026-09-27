@@ -30,24 +30,35 @@ class Pipeline:
         self.registry = ProviderRegistry(settings)
         self.renderer = Renderer(settings.video_width, settings.video_height, settings.video_fps)
 
+    async def generate_script(self, req: TopicRequest | ImageRequest) -> Script:
+        """Stage 1 only: produce an editable script draft (no rendering)."""
+        script_p = self.registry.script()
+        return await script_p.generate(req)
+
     async def run(
         self,
         job: JobInfo,
         req: TopicRequest | ImageRequest,
         job_dir: str,
         image_paths: list[str] | None = None,
+        script: Script | None = None,
     ) -> str:
+        """Full flow. If `script` is provided (e.g. an edited draft), skip
+        generation and render it directly."""
         os.makedirs(job_dir, exist_ok=True)
         script_p = self.registry.script()
         tts_p = self.registry.tts()
         visuals_p = self.registry.visuals()
         job.providers = self.registry.summary()
 
-        # 1) Script -------------------------------------------------------
+        # 1) Script (generate, or use the caller-supplied edited draft) ---
         job.status = JobStatus.SCRIPTING
         job.progress = 10
-        job.message = f"Writing script ({script_p.name})"
-        script: Script = await script_p.generate(req)
+        if script is None:
+            job.message = f"Writing script ({script_p.name})"
+            script = await script_p.generate(req)
+        else:
+            job.message = "Using edited script"
 
         n = len(script.scenes)
         scene_clips: list[SceneClip] = []

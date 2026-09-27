@@ -27,6 +27,7 @@ class SceneClip:
     accent: tuple[int, int, int] = (124, 92, 255)  # brand purple default
     is_hook: bool = False  # first scene -> bigger, punchier caption
     kind: str = "image"  # "image" | "video"
+    caption_style: str = "pop"  # "static" | "pop" | "karaoke"
 
 
 def _escape_drawtext(text: str) -> str:
@@ -122,53 +123,99 @@ class Renderer:
             return await self._render_video_scene(clip, out_path, d)
         return await self._render_still_scene(clip, out_path, d)
 
+    def _reveal_steps(self, clip: SceneClip) -> list[tuple]:
+        """Timeline of (reveal_arg) states across the scene for its style."""
+        words = (_strip_emoji(clip.caption) or clip.caption).split()
+        nw = len(words)
+        if clip.caption_style == "pop" and nw > 1:
+            return [("pop", k) for k in range(1, nw + 1)]
+        if clip.caption_style == "karaoke" and nw > 1:
+            return [("karaoke", k) for k in range(nw)]
+        return [None]  # static
+
+    async def _build_overlays(self, clip: SceneClip) -> list[str]:
+        """Render one transparent overlay PNG per reveal step."""
+        steps = self._reveal_steps(clip)
+        paths: list[str] = []
+        for idx, rev in enumerate(steps):
+            p = f"{clip.image_path}.ov{idx}.png"
+            await asyncio.get_event_loop().run_in_executor(
+                None, self._make_caption_overlay, p, clip, rev
+            )
+            paths.append(p)
+        return paths
+
+    def _overlay_filter(self, n_overlays: int, d: float, base_label: str = "bg") -> str:
+        """Chain N timed overlays across duration d. Overlay PNGs are ffmpeg
+        inputs #1..#N (input #0 is the background), so alias each to ovK first.
+        Reveal step i is shown in its time slice; the last step persists."""
+        # alias overlay inputs [1:v]..[N:v] -> [ov0]..[ov(N-1)]
+        aliases = ";".join(f"[{i + 1}:v]null[ov{i}]" for i in range(n_overlays))
+        if n_overlays == 1:
+            return f"{aliases};[{base_label}][ov0]overlay=0:0:format=auto,format=yuv420p[v]"
+        slice_d = d / n_overlays
+        parts = [aliases]
+        prev = base_label
+        for i in range(n_overlays):
+            start = i * slice_d
+            cond = f"gte(t,{start:.3f})" if i == n_overlays - 1 else \
+                   f"between(t,{start:.3f},{(start + slice_d):.3f})"
+            out = f"v{i}" if i < n_overlays - 1 else "vtmp"
+            parts.append(f"[{prev}][ov{i}]overlay=0:0:enable='{cond}':format=auto[{out}]")
+            prev = out
+        parts.append("[vtmp]format=yuv420p[v]")
+        return ";".join(parts)
+
     async def _render_still_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
         frames = int(d * self.fps)
-        # Burn the caption onto the still with PIL (full styling control).
-        captioned = clip.image_path + ".cap.jpg"
-        await asyncio.get_event_loop().run_in_executor(
-            None, self._burn_caption, clip.image_path, captioned, clip
-        )
-        # Ken Burns: gentle zoom from 1.0 -> 1.08 across the scene.
+        overlays = await self._build_overlays(clip)
+        # Ken Burns zoom on the still background.
         zoom = (
             f"scale={self.w*2}:-1,"
             f"zoompan=z='min(zoom+0.0009,1.08)':d={frames}:"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-            f"s={self.w}x{self.h}:fps={self.fps}"
+            f"s={self.w}x{self.h}:fps={self.fps},format=rgba[bg]"
         )
-        vf = f"{zoom},format=yuv420p"
+        inputs = ["-loop", "1", "-i", clip.image_path]
+        for ov in overlays:
+            inputs += ["-i", ov]
+        fc = f"[0:v]{zoom};" + self._overlay_filter(len(overlays), d, "bg")
         cmd = [
-            "ffmpeg", "-y", "-loop", "1", "-i", captioned,
-            "-t", f"{d}", "-vf", vf, "-r", str(self.fps),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
-        ]
-        await _run(cmd)
-        return out_path
-
-    async def _render_video_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
-        # Build a transparent caption overlay PNG, then composite it over the
-        # looped/trimmed stock clip.
-        overlay = clip.image_path + ".overlay.png"
-        await asyncio.get_event_loop().run_in_executor(
-            None, self._make_caption_overlay, overlay, clip
-        )
-        cmd = [
-            "ffmpeg", "-y",
-            "-stream_loop", "-1", "-i", clip.image_path,  # loop the stock clip
-            "-i", overlay,
-            "-filter_complex",
-            f"[0:v]scale={self.w}:{self.h}:force_original_aspect_ratio=increase,"
-            f"crop={self.w}:{self.h},setsar=1[bg];"
-            f"[bg][1:v]overlay=0:0:format=auto,format=yuv420p[v]",
-            "-map", "[v]",
+            "ffmpeg", "-y", *inputs,
+            "-filter_complex", fc, "-map", "[v]",
             "-t", f"{d}", "-r", str(self.fps),
             "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
         ]
         await _run(cmd)
         return out_path
 
-    def _draw_caption_layer(self, clip: "SceneClip") -> Image.Image:
-        """Render the full caption treatment onto a transparent RGBA layer."""
+    async def _render_video_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
+        overlays = await self._build_overlays(clip)
+        inputs = ["-stream_loop", "-1", "-i", clip.image_path]
+        for ov in overlays:
+            inputs += ["-i", ov]
+        bg = (
+            f"[0:v]scale={self.w}:{self.h}:force_original_aspect_ratio=increase,"
+            f"crop={self.w}:{self.h},setsar=1,format=rgba[bg];"
+        )
+        fc = bg + self._overlay_filter(len(overlays), d, "bg")
+        cmd = [
+            "ffmpeg", "-y", *inputs,
+            "-filter_complex", fc, "-map", "[v]",
+            "-t", f"{d}", "-r", str(self.fps),
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
+        ]
+        await _run(cmd)
+        return out_path
+
+    def _draw_caption_layer(self, clip: "SceneClip", reveal=None) -> Image.Image:
+        """Render the caption onto a transparent RGBA layer.
+
+        `reveal` controls animated styles:
+        - None                -> show the whole caption (static).
+        - ("pop", k)          -> show only the first k words (word pop-in).
+        - ("karaoke", k)      -> show all words, highlight word index k.
+        """
         layer = Image.new("RGBA", (self.w, self.h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(layer)
 
@@ -178,37 +225,56 @@ class Renderer:
             t = (yy - grad_top) / max(self.h - grad_top, 1)
             draw.line([(0, yy), (self.w, yy)], fill=(0, 0, 0, int(150 * t)))
 
-        text = _wrap(_strip_emoji(clip.caption) or clip.caption)
+        clean = _strip_emoji(clip.caption) or clip.caption
+        words = clean.split()
+        style = reveal[0] if reveal else "static"
+        k = reveal[1] if reveal else len(words)
+
+        # Which words are visible + which is "active" (highlighted).
+        if style == "pop":
+            shown_words = words[: max(1, k)]
+            active_idx = -1
+        elif style == "karaoke":
+            shown_words = words
+            active_idx = min(k, len(words) - 1)
+        else:
+            shown_words = words
+            active_idx = -1
+
+        text = _wrap(" ".join(shown_words)) if shown_words else ""
+        full_text = _wrap(clean)  # measure against the FULL caption for stable layout
+
         base = self.w // 15 if clip.is_hook else self.w // 18
         font = self._load_font(size=max(52, base))
-
         spacing = 16
-        bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=spacing, align="center")
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+        # Stable panel sized to the full caption (so it doesn't jump per frame).
+        fbbox = draw.multiline_textbbox((0, 0), full_text or " ", font=font, spacing=spacing, align="center")
+        tw, th = fbbox[2] - fbbox[0], fbbox[3] - fbbox[1]
         x = (self.w - tw) // 2
         y = int(self.h * (0.66 if clip.is_hook else 0.70))
 
         pad = 40
-        # rounded panel
         draw.rounded_rectangle(
-            [x - pad, y - pad, x + tw + pad, y + th + pad],
-            radius=32, fill=(10, 10, 15, 150),
+            [x - pad, y - pad, x + tw + pad, y + th + pad], radius=32, fill=(10, 10, 15, 150)
         )
-        # accent bar on the left edge of the panel (tone color)
         draw.rounded_rectangle(
-            [x - pad, y - pad, x - pad + 12, y + th + pad],
-            radius=6, fill=(*clip.accent, 255),
+            [x - pad, y - pad, x - pad + 12, y + th + pad], radius=6, fill=(*clip.accent, 255)
         )
-        # soft shadow then main text
-        draw.multiline_text(
-            (x + 3, y + 4), text, font=font, fill=(0, 0, 0, 200),
-            spacing=spacing, align="center",
-        )
-        draw.multiline_text(
-            (x, y), text, font=font, fill=(255, 255, 255, 255),
-            spacing=spacing, align="center",
-        )
-        # accent underline beneath the hook for extra punch
+
+        panel_cx = x + tw // 2  # horizontal center of the stable panel
+        if style == "karaoke":
+            self._draw_karaoke(draw, full_text, font, x, y, tw, spacing, clip.accent, active_idx)
+        elif style == "pop":
+            # Fixed layout from the full caption so words never shift; newest
+            # word gets accent color + tiny bounce.
+            self._pop_full_words = words
+            self._pop_accent = clip.accent
+            self._draw_pop(layer, shown_words, font, panel_cx, y, spacing)
+        elif text:
+            # static: center the full caption within the panel
+            self._draw_centered(draw, text, font, panel_cx, y, spacing)
+
         if clip.is_hook:
             uy = y + th + 14
             uw = min(int(tw * 0.5), 220)
@@ -217,15 +283,85 @@ class Renderer:
 
         return layer
 
-    def _burn_caption(self, src: str, dst: str, clip: "SceneClip") -> None:
+    def _draw_karaoke(self, draw, wrapped_text, font, x, y, tw, spacing, accent, active_idx):
+        """Draw wrapped text line-by-line, highlighting the active word index."""
+        lines = wrapped_text.split("\n")
+        wi = 0
+        cy = y
+        for line in lines:
+            lwords = line.split()
+            # measure line width to center it within the panel
+            lbbox = draw.textbbox((0, 0), line, font=font)
+            lw = lbbox[2] - lbbox[0]
+            lh = lbbox[3] - lbbox[1]
+            cx = x + (tw - lw) // 2
+            space_w = draw.textbbox((0, 0), " ", font=font)[2]
+            for w in lwords:
+                color = accent if wi == active_idx else (255, 255, 255)
+                draw.text((cx + 3, cy + 4), w, font=font, fill=(0, 0, 0, 200))
+                draw.text((cx, cy), w, font=font, fill=(*color, 255) if len(color) == 3 else color)
+                ww = draw.textbbox((0, 0), w, font=font)[2]
+                cx += ww + space_w
+                wi += 1
+            cy += lh + spacing
+
+    def _draw_centered(self, draw, text: str, font, cx: int, y: int, spacing: int) -> None:
+        """Draw multiline text horizontally centered on cx (shadow + white)."""
+        bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=spacing, align="center")
+        tw = bbox[2] - bbox[0]
+        left = cx - tw // 2
+        draw.multiline_text((left + 3, y + 4), text, font=font, fill=(0, 0, 0, 200),
+                            spacing=spacing, align="center")
+        draw.multiline_text((left, y), text, font=font, fill=(255, 255, 255, 255),
+                            spacing=spacing, align="center")
+
+    def _draw_pop(self, layer: Image.Image, shown_words: list, font, cx: int, y: int,
+                  spacing: int) -> None:
+        """Stable word-reveal: word positions are computed from the FULL caption
+        so nothing shifts as words appear. Already-shown words are white; the
+        newest word gets an accent color + a small upward 'bounce' (position
+        offset only — no scaling — so spacing never changes)."""
+        if not shown_words:
+            return
+        draw = ImageDraw.Draw(layer)
+        n_shown = len(shown_words)
+
+        space_w = draw.textbbox((0, 0), " ", font=font)[2]
+        asc = draw.textbbox((0, 0), "Ag", font=font)
+        line_h = asc[3] - asc[1]
+
+        # Fixed layout: wrap the FULL caption (all words) once.
+        full_words = self._pop_full_words
+        wrapped = _wrap(" ".join(full_words))
+        lines = [ln.split() for ln in wrapped.split("\n") if ln.strip()]
+
+        newest_idx = n_shown - 1
+        flat = 0
+        cy = y
+        for lwords in lines:
+            widths = [draw.textbbox((0, 0), w, font=font)[2] for w in lwords]
+            lw = sum(widths) + space_w * (max(len(lwords) - 1, 0))
+            cxpos = cx - lw // 2
+            for w, ww in zip(lwords, widths):
+                if flat < n_shown:  # only draw words revealed so far
+                    is_newest = flat == newest_idx
+                    color = self._pop_accent if is_newest else (255, 255, 255)
+                    dy = -8 if is_newest else 0  # tiny upward bounce for the new word
+                    draw.text((cxpos + 3, cy + 4 + dy), w, font=font, fill=(0, 0, 0, 200))
+                    draw.text((cxpos, cy + dy), w, font=font, fill=(*color, 255))
+                cxpos += ww + space_w
+                flat += 1
+            cy += line_h + spacing
+
+    def _burn_caption(self, src: str, dst: str, clip: "SceneClip", reveal=None) -> None:
         img = Image.open(src).convert("RGBA")
         img = _cover_to(img, self.w, self.h)
-        layer = self._draw_caption_layer(clip)
+        layer = self._draw_caption_layer(clip, reveal)
         out = Image.alpha_composite(img, layer).convert("RGB")
         out.save(dst, "JPEG", quality=92)
 
-    def _make_caption_overlay(self, dst: str, clip: "SceneClip") -> None:
-        self._draw_caption_layer(clip).save(dst, "PNG")
+    def _make_caption_overlay(self, dst: str, clip: "SceneClip", reveal=None) -> None:
+        self._draw_caption_layer(clip, reveal).save(dst, "PNG")
 
     def _load_font(self, size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
         if self.font and os.path.exists(self.font):

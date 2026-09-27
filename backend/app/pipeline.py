@@ -10,7 +10,16 @@ from __future__ import annotations
 import os
 
 from app.config import Settings
-from app.models import ImageRequest, JobInfo, JobStatus, Script, Tone, TopicRequest
+from app.models import (
+    AspectRatio,
+    CaptionStyle,
+    ImageRequest,
+    JobInfo,
+    JobStatus,
+    Script,
+    Tone,
+    TopicRequest,
+)
 from app.providers.registry import ProviderRegistry
 from app.render import Renderer, SceneClip
 
@@ -28,7 +37,6 @@ class Pipeline:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.registry = ProviderRegistry(settings)
-        self.renderer = Renderer(settings.video_width, settings.video_height, settings.video_fps)
 
     async def generate_script(self, req: TopicRequest | ImageRequest) -> Script:
         """Stage 1 only: produce an editable script draft (no rendering)."""
@@ -52,6 +60,12 @@ class Pipeline:
         videogen_p = self.registry.videogen()  # premium image->video, or None
         job.providers = self.registry.summary()
 
+        # Per-request output dimensions + caption style.
+        ratio = getattr(req, "aspect_ratio", None) or AspectRatio.VERTICAL
+        w, h = ratio.dimensions(base=1080)
+        caption_style = getattr(req, "caption_style", None) or CaptionStyle.POP
+        renderer = Renderer(w, h, self.s.video_fps)
+
         # 1) Script (generate, or use the caller-supplied edited draft) ---
         job.status = JobStatus.SCRIPTING
         job.progress = 10
@@ -73,7 +87,7 @@ class Pipeline:
             img_path = os.path.join(job_dir, f"scene_{i}.jpg")
             asset = await visuals_p.get_visual(
                 scene.visual_query, img_path,
-                width=self.s.video_width, height=self.s.video_height,
+                width=w, height=h,
                 existing_images=image_paths, index=i,
             )
 
@@ -88,7 +102,7 @@ class Pipeline:
                         asset.path, gen_out,
                         prompt=scene.visual_query,
                         duration_sec=min(max(scene.duration_sec, 3.0), 6.0),
-                        width=self.s.video_width, height=self.s.video_height,
+                        width=w, height=h,
                     )
                     asset.path, asset.kind = gen_out, "video"
                 except Exception:
@@ -113,6 +127,7 @@ class Pipeline:
                     accent=TONE_ACCENT.get(req.tone, (124, 92, 255)),
                     is_hook=(i == 0),
                     kind=asset.kind,
+                    caption_style=caption_style.value,
                 )
             )
 
@@ -123,17 +138,17 @@ class Pipeline:
             job.progress = 60 + int((i / max(n, 1)) * 25)
             job.message = f"Rendering scene {i + 1}/{n}"
             out = os.path.join(job_dir, f"clip_{i}.mp4")
-            await self.renderer.render_scene(clip, out)
+            await renderer.render_scene(clip, out)
             rendered.append(out)
 
         # 4) Concat + mux -------------------------------------------------
         job.progress = 88
         job.message = "Stitching video"
         silent_video = os.path.join(job_dir, "video_silent.mp4")
-        await self.renderer.concat_video(rendered, silent_video)
+        await renderer.concat_video(rendered, silent_video)
 
         merged_audio = os.path.join(job_dir, "narration.m4a")
-        await self.renderer.concat_audio(
+        await renderer.concat_audio(
             [c.audio_path or "" for c in scene_clips], merged_audio
         )
 
@@ -148,7 +163,7 @@ class Pipeline:
         music_out = os.path.join(job_dir, "music.m4a")
         music_on = getattr(req, "music", True) and self.s.music_enabled
         music = await get_music(req.tone, total, music_out, enabled=music_on)
-        await self.renderer.mux(silent_video, merged_audio, final, music_path=music)
+        await renderer.mux(silent_video, merged_audio, final, music_path=music)
 
         job.status = JobStatus.DONE
         job.progress = 100

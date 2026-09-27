@@ -50,15 +50,26 @@ class Pipeline:
         job_dir: str,
         image_paths: list[str] | None = None,
         script: Script | None = None,
+        video_paths: list[str] | None = None,
     ) -> str:
         """Full flow. If `script` is provided (e.g. an edited draft), skip
-        generation and render it directly."""
+        generation and render it directly. If `video_paths` are provided, the
+        user's own footage is used as scene backgrounds (movie-CF mode)."""
         os.makedirs(job_dir, exist_ok=True)
         script_p = self.registry.script()
         tts_p = self.registry.tts()
-        visuals_p = self.registry.visuals()
-        videogen_p = self.registry.videogen()  # premium image->video, or None
-        job.providers = self.registry.summary()
+        # User footage overrides the visual provider entirely.
+        if video_paths:
+            from app.providers.visual_providers import UserVideoProvider
+
+            visuals_p = UserVideoProvider(video_paths)
+            videogen_p = None  # don't AI-generate over the user's own footage
+        else:
+            visuals_p = self.registry.visuals()
+            videogen_p = self.registry.videogen()  # premium image->video, or None
+        job.providers = {**self.registry.summary(), "visuals": visuals_p.name}
+        if video_paths:
+            job.providers["videogen"] = "user-footage"
 
         # Per-request output dimensions + caption style.
         ratio = getattr(req, "aspect_ratio", None) or AspectRatio.VERTICAL

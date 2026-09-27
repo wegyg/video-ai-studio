@@ -102,6 +102,44 @@ class GradientVisualProvider(VisualsProvider):
         return VisualAsset(path=out_path, kind="image")
 
 
+class UserVideoProvider(VisualsProvider):
+    """Uses the user's own uploaded video clips as scene backgrounds.
+
+    Clips are distributed across scenes round-robin and normalized to the exact
+    target WxH. Falls back to the gradient provider if a clip can't be used.
+    """
+
+    name = "uservideo"
+
+    def __init__(self, clips: list[str]) -> None:
+        self._clips = clips
+        self._fallback = GradientVisualProvider()
+
+    async def get_visual(
+        self,
+        query: str,
+        out_path: str,
+        *,
+        width: int,
+        height: int,
+        existing_images: list[str] | None = None,
+        index: int = 0,
+    ) -> VisualAsset:
+        if not self._clips:
+            return await self._fallback.get_visual(
+                query, out_path, width=width, height=height, index=index
+            )
+        src = self._clips[index % len(self._clips)]
+        clip = out_path + ".uclip.mp4"
+        try:
+            await _normalize_video(src, clip, width, height, max_sec=6.0)
+            return VisualAsset(path=clip, kind="video")
+        except Exception:
+            return await self._fallback.get_visual(
+                query, out_path, width=width, height=height, index=index
+            )
+
+
 class PexelsVisualProvider(VisualsProvider):
     name = "pexels"
 

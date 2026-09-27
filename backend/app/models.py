@@ -107,8 +107,9 @@ class ScriptDraft(BaseModel):
     music: bool = True
     aspect_ratio: AspectRatio = AspectRatio.VERTICAL
     caption_style: CaptionStyle = CaptionStyle.POP
-    mode: str = "topic"  # "topic" | "image"
+    mode: str = "topic"  # "topic" | "image" | "video"
     image_job_id: str | None = None  # references uploaded images for image mode
+    video_job_id: str | None = None  # references uploaded footage for video mode
 
 
 class RenderRequest(BaseModel):
@@ -122,6 +123,7 @@ class RenderRequest(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.VERTICAL
     caption_style: CaptionStyle = CaptionStyle.POP
     image_job_id: str | None = None  # reuse images uploaded during image-mode script gen
+    video_job_id: str | None = None  # reuse footage uploaded during video-mode script gen
 
 
 class JobInfo(BaseModel):

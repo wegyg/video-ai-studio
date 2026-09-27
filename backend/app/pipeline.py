@@ -49,6 +49,7 @@ class Pipeline:
         script_p = self.registry.script()
         tts_p = self.registry.tts()
         visuals_p = self.registry.visuals()
+        videogen_p = self.registry.videogen()  # premium image->video, or None
         job.providers = self.registry.summary()
 
         # 1) Script (generate, or use the caller-supplied edited draft) ---
@@ -75,6 +76,23 @@ class Pipeline:
                 width=self.s.video_width, height=self.s.video_height,
                 existing_images=image_paths, index=i,
             )
+
+            # Premium: animate the (product) still into a real AI clip.
+            # Only when a videogen provider is configured AND we have a still
+            # image to animate. Any failure falls back to the still/Ken Burns.
+            if videogen_p is not None and asset.kind == "image":
+                job.message = f"Scene {i + 1}/{n}: AI video ({videogen_p.name})"
+                gen_out = os.path.join(job_dir, f"scene_{i}_ai.mp4")
+                try:
+                    await videogen_p.animate(
+                        asset.path, gen_out,
+                        prompt=scene.visual_query,
+                        duration_sec=min(max(scene.duration_sec, 3.0), 6.0),
+                        width=self.s.video_width, height=self.s.video_height,
+                    )
+                    asset.path, asset.kind = gen_out, "video"
+                except Exception:
+                    pass  # keep the still; render falls back to Ken Burns
 
             audio_path = os.path.join(job_dir, f"scene_{i}.m4a")
             await tts_p.synthesize(

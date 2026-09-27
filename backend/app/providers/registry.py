@@ -14,9 +14,10 @@ from __future__ import annotations
 import importlib.util
 
 from app.config import Settings
-from app.providers.base import ScriptProvider, TTSProvider, VisualsProvider
+from app.providers.base import ScriptProvider, TTSProvider, VideoGenProvider, VisualsProvider
 from app.providers.script_providers import FreeScriptProvider, OpenAIScriptProvider
 from app.providers.tts_providers import GTTSProvider, OpenAITTSProvider, SilentTTSProvider
+from app.providers.videogen_providers import FalVideoGenProvider, RunwayVideoGenProvider
 from app.providers.visual_providers import GradientVisualProvider, PexelsVisualProvider
 
 
@@ -62,9 +63,26 @@ class ProviderRegistry:
                 return PexelsVisualProvider(self.s)
         return GradientVisualProvider()
 
+    # --- Video generation (premium image-to-video) ---------------------
+    def videogen(self) -> VideoGenProvider | None:
+        """Returns a premium image-to-video provider, or None (free tier -> the
+        pipeline uses Ken Burns instead). Never raises in auto/off."""
+        choice = self.s.videogen_provider
+        if choice == "off":
+            return None
+        if choice == "fal" or (choice == "auto" and self.s.fal_api_key):
+            if self.s.fal_api_key:
+                return FalVideoGenProvider(self.s)
+        if choice == "runway" or (choice == "auto" and self.s.runway_api_key):
+            if self.s.runway_api_key:
+                return RunwayVideoGenProvider(self.s)
+        return None
+
     def summary(self) -> dict[str, str]:
+        vg = self.videogen()
         return {
             "script": self.script().name,
             "tts": self.tts().name,
             "visuals": self.visuals().name,
+            "videogen": vg.name if vg else "kenburns",
         }

@@ -63,3 +63,26 @@ class VisualsProvider(ABC):
         """Return a VisualAsset. `out_path` is a suggested path (extension may
         change for video). Providers should always produce SOMETHING usable."""
         ...
+
+
+class VideoGenProvider(ABC):
+    """Premium tier: animate a still image (or a text prompt) into a real video
+    clip using a generative model (Runway, Kling, etc.). Returns the clip path.
+
+    Implementations are async and may poll a remote job. They should raise on
+    failure so the pipeline can gracefully fall back to the Ken Burns path.
+    """
+
+    name: str = "base"
+
+    @abstractmethod
+    async def animate(
+        self,
+        image_path: str,
+        out_path: str,
+        *,
+        prompt: str,
+        duration_sec: float,
+        width: int,
+        height: int,
+    ) -> str: ...

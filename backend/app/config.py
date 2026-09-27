@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     video_height: int = 1920
     video_fps: int = 30
 
+    # --- Background music ---
+    # When true, adds a music bed: a local track from assets/music/ if present,
+    # otherwise a procedurally-synthesized ambient bed (no files needed).
+    music_enabled: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

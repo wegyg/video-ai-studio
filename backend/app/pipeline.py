@@ -109,18 +109,19 @@ class Pipeline:
         )
 
         job.progress = 95
-        job.message = "Adding audio"
+        job.message = "Adding music & audio"
         final = os.path.join(job_dir, "final.mp4")
-        music = _default_music_path()
+
+        from app.music import get_music
+        from app.render import _probe_duration as _probe
+
+        total = await _probe(silent_video)
+        music_out = os.path.join(job_dir, "music.m4a")
+        music_on = getattr(req, "music", True) and self.s.music_enabled
+        music = await get_music(req.tone, total, music_out, enabled=music_on)
         await self.renderer.mux(silent_video, merged_audio, final, music_path=music)
 
         job.status = JobStatus.DONE
         job.progress = 100
         job.message = "Done"
         return final
-
-
-def _default_music_path() -> str | None:
-    # Optional: drop a royalty-free loop at backend/assets/music.mp3 to enable.
-    p = os.path.join(os.path.dirname(__file__), "..", "assets", "music.mp3")
-    return p if os.path.exists(p) else None

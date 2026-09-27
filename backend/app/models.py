@@ -34,6 +34,7 @@ class TopicRequest(BaseModel):
     duration_sec: int = Field(20, ge=5, le=60)
     language: str = "en"
     voice: str = "default"
+    music: bool = True  # add a background music bed
 
 
 class ImageRequest(BaseModel):
@@ -45,6 +46,7 @@ class ImageRequest(BaseModel):
     duration_sec: int = Field(15, ge=5, le=60)
     language: str = "en"
     voice: str = "default"
+    music: bool = True
     # image file paths are attached by the API layer after upload
 
 

@@ -91,6 +91,7 @@ async def generate_image(
     duration_sec: int = Form(15),
     language: str = Form("en"),
     voice: str = Form("default"),
+    music: bool = Form(True),
     images: list[UploadFile] = File(...),
 ):
     if not images:
@@ -114,6 +115,7 @@ async def generate_image(
         duration_sec=duration_sec,
         language=language,
         voice=voice,
+        music=music,
     )
     job = JobInfo(id=job_id, mode="image", status=JobStatus.QUEUED)
     JOBS[job_id] = job

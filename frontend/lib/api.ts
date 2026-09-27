@@ -34,6 +34,7 @@ export interface TopicPayload {
   duration_sec: number;
   language: string;
   voice: string;
+  music: boolean;
 }
 
 export async function getProviders(): Promise<ProvidersInfo> {

@@ -10,9 +10,18 @@ from __future__ import annotations
 import os
 
 from app.config import Settings
-from app.models import ImageRequest, JobInfo, JobStatus, Script, TopicRequest
+from app.models import ImageRequest, JobInfo, JobStatus, Script, Tone, TopicRequest
 from app.providers.registry import ProviderRegistry
 from app.render import Renderer, SceneClip
+
+# Tone -> accent color (used for caption accent bar / underline).
+TONE_ACCENT: dict[Tone, tuple[int, int, int]] = {
+    Tone.ENERGETIC: (255, 82, 82),      # vivid red
+    Tone.PROFESSIONAL: (56, 132, 255),  # confident blue
+    Tone.FRIENDLY: (255, 184, 46),      # warm amber
+    Tone.LUXURY: (201, 162, 39),        # gold
+    Tone.PLAYFUL: (124, 92, 255),       # purple
+}
 
 
 class Pipeline:
@@ -50,7 +59,7 @@ class Pipeline:
             job.message = f"Scene {i + 1}/{n}: visuals ({visuals_p.name}) + voice ({tts_p.name})"
 
             img_path = os.path.join(job_dir, f"scene_{i}.jpg")
-            await visuals_p.get_visual(
+            asset = await visuals_p.get_visual(
                 scene.visual_query, img_path,
                 width=self.s.video_width, height=self.s.video_height,
                 existing_images=image_paths, index=i,
@@ -68,10 +77,13 @@ class Pipeline:
 
             scene_clips.append(
                 SceneClip(
-                    image_path=img_path,
+                    image_path=asset.path,
                     caption=scene.text,
                     duration=scene.duration_sec,
                     audio_path=audio_path,
+                    accent=TONE_ACCENT.get(req.tone, (124, 92, 255)),
+                    is_hook=(i == 0),
+                    kind=asset.kind,
                 )
             )
 

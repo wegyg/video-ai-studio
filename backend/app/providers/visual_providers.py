@@ -17,7 +17,7 @@ import httpx
 from PIL import Image, ImageDraw, ImageFilter
 
 from app.config import Settings
-from app.providers.base import VisualsProvider
+from app.providers.base import VisualAsset, VisualsProvider
 
 
 def _seed_color(query: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
@@ -39,6 +39,20 @@ def _draw_gradient(w: int, h: int, top: tuple, bottom: tuple) -> Image.Image:
         g = int(top[1] + (bottom[1] - top[1]) * t)
         b = int(top[2] + (bottom[2] - top[2]) * t)
         draw.line([(0, y), (w, y)], fill=(r, g, b))
+    # Soft glowing light blobs for depth / a "designed" feel.
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    lighter = tuple(min(255, int(c * 1.35) + 30) for c in top)
+    blob_r = int(w * 0.6)
+    positions = [(int(w * 0.15), int(h * 0.18)), (int(w * 0.85), int(h * 0.42))]
+    for bx, by in positions:
+        gd.ellipse(
+            [bx - blob_r, by - blob_r, bx + blob_r, by + blob_r],
+            fill=(*lighter, 55),
+        )
+    glow = glow.filter(ImageFilter.GaussianBlur(w // 4))
+    base = Image.alpha_composite(base.convert("RGBA"), glow).convert("RGB")
+
     # subtle vignette for depth
     vignette = Image.new("L", (w, h), 0)
     vd = ImageDraw.Draw(vignette)
@@ -60,7 +74,7 @@ class GradientVisualProvider(VisualsProvider):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
-    ) -> str:
+    ) -> VisualAsset:
         def _run() -> None:
             top, bottom = _seed_color(query)
             canvas = _draw_gradient(width, height, top, bottom)
@@ -85,7 +99,7 @@ class GradientVisualProvider(VisualsProvider):
             canvas.save(out_path, "JPEG", quality=90)
 
         await asyncio.get_event_loop().run_in_executor(None, _run)
-        return out_path
+        return VisualAsset(path=out_path, kind="image")
 
 
 class PexelsVisualProvider(VisualsProvider):
@@ -104,44 +118,115 @@ class PexelsVisualProvider(VisualsProvider):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
-    ) -> str:
+    ) -> VisualAsset:
         if existing_images:  # honor uploaded product photos in image mode
             return await self._fallback.get_visual(
                 query, out_path, width=width, height=height,
                 existing_images=existing_images, index=index,
             )
+        headers = {"Authorization": self._settings.pexels_api_key}
+        # 1) Prefer a real MOVING stock clip (portrait).
         try:
-            headers = {"Authorization": self._settings.pexels_api_key}
-            async with httpx.AsyncClient(timeout=15) as client:
-                r = await client.get(
-                    "https://api.pexels.com/v1/search",
-                    headers=headers,
-                    params={"query": query, "orientation": "portrait", "per_page": 5},
-                )
-                r.raise_for_status()
-                photos = r.json().get("photos", [])
-                if not photos:
-                    raise ValueError("no results")
-                pick = photos[index % len(photos)]
-                img_url = pick["src"]["large2x"]
-                img = await client.get(img_url)
-                img.raise_for_status()
-                tmp = out_path + ".dl"
-                with open(tmp, "wb") as f:
-                    f.write(img.content)
-            # normalize to exact 9:16 canvas
-            from PIL import Image as _Image
-
-            photo = _Image.open(tmp).convert("RGB")
-            photo = _cover_fit(photo, width, height)
-            photo.save(out_path, "JPEG", quality=90)
-            os.remove(tmp)
-            return out_path
+            return await self._fetch_video(query, out_path, width, height, index, headers)
         except Exception:
-            # graceful fallback keeps the pipeline alive
-            return await self._fallback.get_visual(
-                query, out_path, width=width, height=height, index=index
+            pass
+        # 2) Fall back to a still stock photo.
+        try:
+            return await self._fetch_photo(query, out_path, width, height, index, headers)
+        except Exception:
+            pass
+        # 3) Offline gradient keeps the pipeline alive.
+        return await self._fallback.get_visual(
+            query, out_path, width=width, height=height, index=index
+        )
+
+    async def _fetch_video(
+        self, query: str, out_path: str, width: int, height: int, index: int, headers: dict
+    ) -> VisualAsset:
+        async with httpx.AsyncClient(timeout=25) as client:
+            r = await client.get(
+                "https://api.pexels.com/videos/search",
+                headers=headers,
+                params={"query": query, "orientation": "portrait", "per_page": 8, "size": "medium"},
             )
+            r.raise_for_status()
+            videos = r.json().get("videos", [])
+            if not videos:
+                raise ValueError("no video results")
+            pick = videos[index % len(videos)]
+            # choose a portrait-ish file with the largest height <= 1920
+            files = sorted(
+                [f for f in pick.get("video_files", []) if f.get("height")],
+                key=lambda f: f["height"],
+                reverse=True,
+            )
+            portrait = [f for f in files if f["height"] >= f.get("width", 0)]
+            chosen = (portrait or files)[0]
+            vid_url = chosen["link"]
+            raw = out_path + ".src.mp4"
+            async with client.stream("GET", vid_url) as resp:
+                resp.raise_for_status()
+                with open(raw, "wb") as f:
+                    async for chunk in resp.aiter_bytes():
+                        f.write(chunk)
+        # normalize to exact 9:16, cap length, strip audio -> returned as video
+        clip = out_path + ".clip.mp4"
+        await _normalize_video(raw, clip, width, height, max_sec=6.0)
+        try:
+            os.remove(raw)
+        except OSError:
+            pass
+        return VisualAsset(path=clip, kind="video")
+
+    async def _fetch_photo(
+        self, query: str, out_path: str, width: int, height: int, index: int, headers: dict
+    ) -> VisualAsset:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                "https://api.pexels.com/v1/search",
+                headers=headers,
+                params={"query": query, "orientation": "portrait", "per_page": 8},
+            )
+            r.raise_for_status()
+            photos = r.json().get("photos", [])
+            if not photos:
+                raise ValueError("no photo results")
+            pick = photos[index % len(photos)]
+            img = await client.get(pick["src"]["large2x"])
+            img.raise_for_status()
+            tmp = out_path + ".dl"
+            with open(tmp, "wb") as f:
+                f.write(img.content)
+        photo = Image.open(tmp).convert("RGB")
+        photo = _cover_fit(photo, width, height)
+        photo.save(out_path, "JPEG", quality=90)
+        os.remove(tmp)
+        return VisualAsset(path=out_path, kind="image")
+
+
+# --- video helper ------------------------------------------------------------
+async def _normalize_video(src: str, dst: str, w: int, h: int, max_sec: float) -> None:
+    """Crop/scale a stock clip to exact WxH (9:16), trim length, drop audio."""
+    import asyncio as _asyncio
+    import subprocess as _sp
+
+    vf = (
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},setsar=1"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-i", src,
+        "-t", f"{max_sec}", "-an",
+        "-vf", vf,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
+        dst,
+    ]
+    proc = await _asyncio.create_subprocess_exec(
+        *cmd, stdout=_sp.DEVNULL, stderr=_sp.PIPE
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"normalize_video failed: {err.decode()[-300:]}")
 
 
 # --- image helpers -----------------------------------------------------------

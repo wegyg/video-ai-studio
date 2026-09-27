@@ -15,13 +15,18 @@ add API keys.
 - **Two generation modes**
   - ✍️ **From Topic** — enter a product/brief, get a scripted promo short.
   - 🖼️ **From Photos** — upload product images, get an animated ad reel.
-- **Pluggable provider architecture** (adapter pattern) for every stage:
-  | Stage | Free (default) | Upgrade (auto-detected via API key) |
+- **Free tier & Premium tier** — same app, keys unlock quality:
+  | Stage | 🆓 Free (default) | 💎 Premium (auto-detected via API key) |
   |-------|----------------|-------------------------------------|
   | Script | Template engine | OpenAI LLM |
   | Voice | gTTS (free) → silent fallback | OpenAI TTS |
-  | Visuals | Gradient cards / photo compositing | Pexels stock (free key) |
-  | Video model | — | Runway / Kling (stubs ready) |
+  | Visuals | Gradient cards / photo compositing | Pexels stock video (free key) |
+  | **Video** | **Ken Burns zoom** | **fal.ai / Runway image-to-video** (animate product photos) |
+  | Music | Procedural bed | Procedural bed (or your own tracks) |
+
+  Every stage is a pluggable provider (adapter pattern). With **zero keys** the
+  app produces a complete video; each key you add upgrades one stage — and if a
+  premium call fails, it **falls back to the free path** so a render never breaks.
 - **Auto-fallback**: with zero keys the app still produces a complete video.
 - **9:16 rendering** via FFmpeg — Ken Burns zoom + burned-in animated captions
   + narration + optional background music.
@@ -76,24 +81,31 @@ Open http://localhost:3000, pick a mode, and generate. 🎉
 
 ---
 
-## 🔌 Enabling premium providers
+## 🔌 Free tier → Premium tier
 
-Everything is **opt-in via `.env`** — no code changes needed:
+The **free tier needs no keys at all**. Premium is **opt-in via `.env`** — no code changes:
 
 ```env
-OPENAI_API_KEY=sk-...     # richer scripts + natural TTS voices
-PEXELS_API_KEY=...        # real stock footage (free key at pexels.com/api)
-RUNWAY_API_KEY=...        # (stub) full AI video generation
-KLING_API_KEY=...         # (stub) full AI video generation
+OPENAI_API_KEY=sk-...     # smarter scripts + natural TTS voices
+PEXELS_API_KEY=...        # real stock footage (FREE key at pexels.com/api)
+
+# Premium image-to-video (animate product photos into real AI clips):
+FAL_API_KEY=...           # fal.ai — one key reaches Kling / Runway / Veo / etc.
+FAL_VIDEO_MODEL=fal-ai/kling-video/v2/master/image-to-video
+# or Runway's native API:
+RUNWAY_API_KEY=...
+RUNWAY_VIDEO_MODEL=gen4_turbo
 ```
 
-Provider selection per stage (`auto` | `free` | `<name>`):
+Provider selection per stage (`auto` | `free`/`off` | `<name>`):
 ```env
 SCRIPT_PROVIDER=auto
 TTS_PROVIDER=auto
 VISUALS_PROVIDER=auto
+VIDEOGEN_PROVIDER=auto     # auto -> fal/runway if key present, else Ken Burns
 ```
 `auto` = use the best provider your keys allow, else fall back to free.
+The UI shows a **🆓 Free tier / 💎 Premium tier active** badge based on what's configured.
 
 ---
 

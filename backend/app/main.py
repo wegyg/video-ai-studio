@@ -77,8 +77,8 @@ async def providers():
         "upgrades": {
             "openai_script_tts": bool(s.openai_api_key),
             "pexels_visuals": bool(s.pexels_api_key),
+            "fal_video": bool(s.fal_api_key),
             "runway_video": bool(s.runway_api_key),
-            "kling_video": bool(s.kling_api_key),
         },
     }
 

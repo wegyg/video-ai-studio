@@ -37,13 +37,21 @@ class Settings(BaseSettings):
     script_provider: str = "auto"
     tts_provider: str = "auto"
     visuals_provider: str = "auto"
+    # Image-to-video generation (premium): auto | off | fal | runway
+    videogen_provider: str = "auto"
 
     # --- Optional API keys (leave empty for free mode) ---
     openai_api_key: str = ""
     runway_api_key: str = ""
     kling_api_key: str = ""
+    fal_api_key: str = ""  # fal.ai — one key reaches Kling/Runway/Veo/etc.
     pexels_api_key: str = ""  # free stock video/photo API (optional, recommended)
     elevenlabs_api_key: str = ""
+
+    # --- Premium video model selection ---
+    # fal.ai endpoint id (image-to-video). Kling v2 master is a strong default.
+    fal_video_model: str = "fal-ai/kling-video/v2/master/image-to-video"
+    runway_video_model: str = "gen4_turbo"
 
     # --- Rendering defaults (9:16 vertical short) ---
     video_width: int = 1080

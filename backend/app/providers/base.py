@@ -8,8 +8,18 @@ picks the concrete provider at runtime based on config + available API keys.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Literal
 
 from app.models import ImageRequest, Script, TopicRequest
+
+
+@dataclass
+class VisualAsset:
+    """A scene background: either a still image or a ready-to-use video clip."""
+
+    path: str
+    kind: Literal["image", "video"] = "image"
 
 
 class ScriptProvider(ABC):
@@ -49,4 +59,7 @@ class VisualsProvider(ABC):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
-    ) -> str: ...
+    ) -> VisualAsset:
+        """Return a VisualAsset. `out_path` is a suggested path (extension may
+        change for video). Providers should always produce SOMETHING usable."""
+        ...

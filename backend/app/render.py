@@ -20,10 +20,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 @dataclass
 class SceneClip:
-    image_path: str
+    image_path: str  # still image OR source video clip depending on `kind`
     caption: str
     duration: float
     audio_path: str | None = None
+    accent: tuple[int, int, int] = (124, 92, 255)  # brand purple default
+    is_hook: bool = False  # first scene -> bigger, punchier caption
+    kind: str = "image"  # "image" | "video"
 
 
 def _escape_drawtext(text: str) -> str:
@@ -49,6 +52,38 @@ def _wrap(text: str, width: int = 22) -> str:
     if cur:
         lines.append(cur)
     return "\n".join(lines[:4])
+
+
+# --- Emoji handling ----------------------------------------------------------
+# PIL can't reliably rasterize color-emoji glyphs at arbitrary sizes with a
+# regular truetype font, so unrenderable emoji show up as "tofu" boxes. We map
+# the most common promo emojis to plain-text/symbol equivalents and drop the
+# rest, keeping captions clean in the free (PIL-rendered) path.
+_EMOJI_MAP = {
+    "🔥": "", "🚀": "", "✨": "", "😎": "", "😉": "", "👋": "",
+    "💛": "", "⭐": "", "✅": "", "👉": "", "💯": "",
+    "🎉": "", "❤️": "", "❤": "", "😍": "", "🤝": "",
+}
+
+
+def _strip_emoji(text: str) -> str:
+    for e, repl in _EMOJI_MAP.items():
+        text = text.replace(e, repl)
+    # remove any remaining non-BMP / symbol chars that would tofu
+    cleaned = []
+    for ch in text:
+        code = ord(ch)
+        # keep basic latin/latin-1, common punctuation, CJK, hangul, kana
+        if (
+            code < 0x2500  # below the symbol/emoji blocks
+            or 0x3000 <= code <= 0x9FFF  # CJK
+            or 0xAC00 <= code <= 0xD7A3  # Hangul
+            or 0x3040 <= code <= 0x30FF  # kana
+        ):
+            cleaned.append(ch)
+    out = "".join(cleaned)
+    # collapse whitespace left by removed emojis
+    return " ".join(out.split()).strip()
 
 
 async def _run(cmd: list[str]) -> None:
@@ -82,15 +117,18 @@ class Renderer:
 
     async def render_scene(self, clip: SceneClip, out_path: str) -> str:
         d = max(clip.duration, 1.0)
-        frames = int(d * self.fps)
 
-        # Burn the caption onto the still with PIL (portable: no ffmpeg
-        # drawtext/freetype dependency, and gives us full styling control).
+        if clip.kind == "video":
+            return await self._render_video_scene(clip, out_path, d)
+        return await self._render_still_scene(clip, out_path, d)
+
+    async def _render_still_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
+        frames = int(d * self.fps)
+        # Burn the caption onto the still with PIL (full styling control).
         captioned = clip.image_path + ".cap.jpg"
         await asyncio.get_event_loop().run_in_executor(
-            None, self._burn_caption, clip.image_path, captioned, clip.caption
+            None, self._burn_caption, clip.image_path, captioned, clip
         )
-
         # Ken Burns: gentle zoom from 1.0 -> 1.08 across the scene.
         zoom = (
             f"scale={self.w*2}:-1,"
@@ -107,36 +145,87 @@ class Renderer:
         await _run(cmd)
         return out_path
 
-    def _burn_caption(self, src: str, dst: str, caption: str) -> None:
-        img = Image.open(src).convert("RGB")
-        draw = ImageDraw.Draw(img)
-        text = _wrap(caption)
-        font = self._load_font(size=max(48, self.w // 17))
-        # measure multi-line text
-        bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=14, align="center")
+    async def _render_video_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
+        # Build a transparent caption overlay PNG, then composite it over the
+        # looped/trimmed stock clip.
+        overlay = clip.image_path + ".overlay.png"
+        await asyncio.get_event_loop().run_in_executor(
+            None, self._make_caption_overlay, overlay, clip
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1", "-i", clip.image_path,  # loop the stock clip
+            "-i", overlay,
+            "-filter_complex",
+            f"[0:v]scale={self.w}:{self.h}:force_original_aspect_ratio=increase,"
+            f"crop={self.w}:{self.h},setsar=1[bg];"
+            f"[bg][1:v]overlay=0:0:format=auto,format=yuv420p[v]",
+            "-map", "[v]",
+            "-t", f"{d}", "-r", str(self.fps),
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
+        ]
+        await _run(cmd)
+        return out_path
+
+    def _draw_caption_layer(self, clip: "SceneClip") -> Image.Image:
+        """Render the full caption treatment onto a transparent RGBA layer."""
+        layer = Image.new("RGBA", (self.w, self.h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
+
+        # Dark gradient at the bottom for consistent legibility over any bg.
+        grad_top = int(self.h * 0.55)
+        for yy in range(grad_top, self.h):
+            t = (yy - grad_top) / max(self.h - grad_top, 1)
+            draw.line([(0, yy), (self.w, yy)], fill=(0, 0, 0, int(150 * t)))
+
+        text = _wrap(_strip_emoji(clip.caption) or clip.caption)
+        base = self.w // 15 if clip.is_hook else self.w // 18
+        font = self._load_font(size=max(52, base))
+
+        spacing = 16
+        bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=spacing, align="center")
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         x = (self.w - tw) // 2
-        y = int(self.h * 0.70)
-        # semi-transparent rounded panel behind the text
-        pad = 34
-        panel = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        pdraw = ImageDraw.Draw(panel)
-        pdraw.rounded_rectangle(
+        y = int(self.h * (0.66 if clip.is_hook else 0.70))
+
+        pad = 40
+        # rounded panel
+        draw.rounded_rectangle(
             [x - pad, y - pad, x + tw + pad, y + th + pad],
-            radius=28, fill=(0, 0, 0, 130),
+            radius=32, fill=(10, 10, 15, 150),
         )
-        img = Image.alpha_composite(img.convert("RGBA"), panel).convert("RGB")
-        draw = ImageDraw.Draw(img)
+        # accent bar on the left edge of the panel (tone color)
+        draw.rounded_rectangle(
+            [x - pad, y - pad, x - pad + 12, y + th + pad],
+            radius=6, fill=(*clip.accent, 255),
+        )
         # soft shadow then main text
         draw.multiline_text(
-            (x + 3, y + 3), text, font=font, fill=(0, 0, 0),
-            spacing=14, align="center",
+            (x + 3, y + 4), text, font=font, fill=(0, 0, 0, 200),
+            spacing=spacing, align="center",
         )
         draw.multiline_text(
-            (x, y), text, font=font, fill=(255, 255, 255),
-            spacing=14, align="center",
+            (x, y), text, font=font, fill=(255, 255, 255, 255),
+            spacing=spacing, align="center",
         )
-        img.save(dst, "JPEG", quality=90)
+        # accent underline beneath the hook for extra punch
+        if clip.is_hook:
+            uy = y + th + 14
+            uw = min(int(tw * 0.5), 220)
+            ux = (self.w - uw) // 2
+            draw.rounded_rectangle([ux, uy, ux + uw, uy + 8], radius=4, fill=(*clip.accent, 255))
+
+        return layer
+
+    def _burn_caption(self, src: str, dst: str, clip: "SceneClip") -> None:
+        img = Image.open(src).convert("RGBA")
+        img = _cover_to(img, self.w, self.h)
+        layer = self._draw_caption_layer(clip)
+        out = Image.alpha_composite(img, layer).convert("RGB")
+        out.save(dst, "JPEG", quality=92)
+
+    def _make_caption_overlay(self, dst: str, clip: "SceneClip") -> None:
+        self._draw_caption_layer(clip).save(dst, "PNG")
 
     def _load_font(self, size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
         if self.font and os.path.exists(self.font):
@@ -204,6 +293,21 @@ class Renderer:
             ]
         await _run(cmd)
         return out_path
+
+
+def _cover_to(img: Image.Image, w: int, h: int) -> Image.Image:
+    """Scale to cover WxH, center-crop overflow (keeps RGBA)."""
+    if img.width == w and img.height == h:
+        return img
+    src_ratio = img.width / img.height
+    dst_ratio = w / h
+    if src_ratio > dst_ratio:
+        new_w, new_h = int(h * src_ratio), h
+    else:
+        new_w, new_h = w, int(w / src_ratio)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left, top = (new_w - w) // 2, (new_h - h) // 2
+    return img.crop((left, top, left + w, top + h))
 
 
 def _find_font() -> str:

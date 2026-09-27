@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  AspectRatio,
+  CaptionStyle,
   generateFromImages,
   generateFromTopic,
   getJob,
@@ -11,15 +13,26 @@ import {
   ScriptDraft,
   scriptFromImages,
   scriptFromTopic,
+  scriptFromVideos,
   Tone,
 } from "@/lib/api";
 import ProviderBadge from "@/components/ProviderBadge";
 import JobProgress from "@/components/JobProgress";
 import TimelineEditor from "@/components/TimelineEditor";
 
-type Mode = "topic" | "image";
+type Mode = "topic" | "image" | "video";
 
 const TONES: Tone[] = ["energetic", "professional", "friendly", "luxury", "playful"];
+const RATIOS: { value: AspectRatio; label: string }[] = [
+  { value: "9:16", label: "9:16 Reels" },
+  { value: "1:1", label: "1:1 Feed" },
+  { value: "16:9", label: "16:9 YouTube" },
+];
+const CAPTION_STYLES: { value: CaptionStyle; label: string }[] = [
+  { value: "pop", label: "Pop (word-by-word)" },
+  { value: "karaoke", label: "Karaoke (highlight)" },
+  { value: "static", label: "Static" },
+];
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("topic");
@@ -31,7 +44,10 @@ export default function Home() {
   const [duration, setDuration] = useState(18);
   const [language, setLanguage] = useState("en");
   const [music, setMusic] = useState(true);
+  const [ratio, setRatio] = useState<AspectRatio>("9:16");
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("pop");
   const [files, setFiles] = useState<File[]>([]);
+  const [videos, setVideos] = useState<File[]>([]);
 
   const [job, setJob] = useState<JobInfo | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,9 +80,24 @@ export default function Home() {
       .filter(Boolean);
   }
 
-  function buildImageForm(): FormData | null {
-    if (files.length === 0) {
-      alert("Please upload at least one product image.");
+  function topicPayload() {
+    return {
+      topic,
+      key_points: points(),
+      tone,
+      duration_sec: duration,
+      language,
+      voice: "default",
+      music,
+      aspect_ratio: ratio,
+      caption_style: captionStyle,
+    };
+  }
+
+  // Build a multipart form for image/video modes. `field` is "images"|"videos".
+  function buildUploadForm(field: "images" | "videos", uploads: File[]): FormData | null {
+    if (uploads.length === 0) {
+      alert(field === "images" ? "Please upload at least one image." : "Please upload at least one video clip.");
       return null;
     }
     const fd = new FormData();
@@ -77,11 +108,12 @@ export default function Home() {
     fd.append("language", language);
     fd.append("voice", "default");
     fd.append("music", String(music));
-    files.forEach((f) => fd.append("images", f));
+    uploads.forEach((f) => fd.append(field, f));
     return fd;
   }
 
   // One-shot: generate the whole video immediately (no editing).
+  // (Video mode always goes through the editable draft flow.)
   async function handleGenerate() {
     if (!topic.trim()) return;
     setBusy(true);
@@ -90,21 +122,15 @@ export default function Home() {
     try {
       let created: JobInfo;
       if (mode === "topic") {
-        created = await generateFromTopic({
-          topic,
-          key_points: points(),
-          tone,
-          duration_sec: duration,
-          language,
-          voice: "default",
-          music,
-        });
+        created = await generateFromTopic(topicPayload());
       } else {
-        const fd = buildImageForm();
+        const fd = buildUploadForm("images", files);
         if (!fd) {
           setBusy(false);
           return;
         }
+        fd.append("aspect_ratio", ratio);
+        fd.append("caption_style", captionStyle);
         created = await generateFromImages(fd);
       }
       setJob(created);
@@ -124,23 +150,24 @@ export default function Home() {
     try {
       let d: ScriptDraft;
       if (mode === "topic") {
-        d = await scriptFromTopic({
-          topic,
-          key_points: points(),
-          tone,
-          duration_sec: duration,
-          language,
-          voice: "default",
-          music,
-        });
-      } else {
-        const fd = buildImageForm();
+        d = await scriptFromTopic(topicPayload());
+      } else if (mode === "image") {
+        const fd = buildUploadForm("images", files);
         if (!fd) {
           setBusy(false);
           return;
         }
         d = await scriptFromImages(fd);
+      } else {
+        const fd = buildUploadForm("videos", videos);
+        if (!fd) {
+          setBusy(false);
+          return;
+        }
+        d = await scriptFromVideos(fd);
       }
+      // carry the UI ratio/caption choices into the draft for rendering
+      d = { ...d, aspect_ratio: ratio, caption_style: captionStyle };
       setDraft(d);
     } catch (e) {
       alert((e as Error).message);
@@ -191,21 +218,29 @@ export default function Home() {
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
           {/* mode toggle */}
           <div className="mb-6 inline-flex rounded-xl border border-white/10 bg-black/20 p-1">
-            {(["topic", "image"] as Mode[]).map((m) => (
+            {(["topic", "image", "video"] as Mode[]).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
                   mode === m ? "bg-brand text-white" : "text-white/60 hover:text-white"
                 }`}
               >
-                {m === "topic" ? "✍️ From Topic" : "🖼️ From Photos"}
+                {m === "topic" ? "✍️ Topic" : m === "image" ? "🖼️ Photos" : "🎥 My Video"}
               </button>
             ))}
           </div>
 
           <div className="space-y-5">
-            <Field label={mode === "topic" ? "Product / Topic" : "Product name"}>
+            <Field
+              label={
+                mode === "topic"
+                  ? "Product / Topic"
+                  : mode === "image"
+                  ? "Product name"
+                  : "What is this video about?"
+              }
+            >
               <input
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
@@ -228,6 +263,26 @@ export default function Home() {
                     {files.length} image(s) selected
                   </p>
                 )}
+              </Field>
+            )}
+
+            {mode === "video" && (
+              <Field label="Your video clips">
+                <input
+                  type="file"
+                  accept="video/*"
+                  multiple
+                  onChange={(e) => setVideos(Array.from(e.target.files ?? []))}
+                  className="block w-full text-sm text-white/70 file:mr-3 file:rounded-lg file:border-0 file:bg-brand file:px-4 file:py-2 file:text-white"
+                />
+                {videos.length > 0 && (
+                  <p className="mt-2 text-xs text-white/50">
+                    {videos.length} clip(s) selected — AI will add captions, voice &amp; music
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-white/40">
+                  💡 Upload footage (incl. downloaded from Google Drive) — AI turns it into a CF-style promo.
+                </p>
               </Field>
             )}
 

@@ -107,11 +107,25 @@ bash run_e2e.sh                       # full HTTP test (topic + image modes)
 
 ---
 
+## ✂️ Editing workflow
+
+Two ways to create a video:
+
+- **⚡ Quick Generate** — one call, full video (`POST /api/generate/topic` | `/image`).
+- **📝 Review & Edit** — generate an editable script first, tweak it, then render:
+  1. `POST /api/script/topic` (or `/api/script/image` with photos) → returns a
+     `ScriptDraft` (scenes with caption, narration, visual query, duration).
+  2. Edit scenes in the timeline UI (reorder, retime, rewrite, add/remove).
+  3. `POST /api/render` with the edited script → renders the final MP4.
+
+  Image-mode uploads are stashed under an `image_job_id` so the render step
+  reuses the same product photos.
+
 ## 🗺️ Roadmap ideas
 
 - [ ] Wire up Runway/Kling image-to-video generation (stubs exist)
-- [ ] Music library + beat-synced cuts
-- [ ] Editable timeline in the UI before final render
+- [x] Music library + procedural background music
+- [x] Editable timeline in the UI before final render
 - [ ] Multiple aspect ratios (1:1, 16:9)
 - [ ] Persist jobs in Redis/DB + a render queue for scale
 

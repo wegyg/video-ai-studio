@@ -6,10 +6,16 @@ import {
   generateFromTopic,
   getJob,
   JobInfo,
+  renderScript,
+  Script,
+  ScriptDraft,
+  scriptFromImages,
+  scriptFromTopic,
   Tone,
 } from "@/lib/api";
 import ProviderBadge from "@/components/ProviderBadge";
 import JobProgress from "@/components/JobProgress";
+import TimelineEditor from "@/components/TimelineEditor";
 
 type Mode = "topic" | "image";
 
@@ -29,6 +35,7 @@ export default function Home() {
 
   const [job, setJob] = useState<JobInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<ScriptDraft | null>(null); // editable script
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // poll job status until done/error
@@ -50,21 +57,42 @@ export default function Home() {
     };
   }, [job?.id, job?.status]);
 
+  function points(): string[] {
+    return keyPoints
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  function buildImageForm(): FormData | null {
+    if (files.length === 0) {
+      alert("Please upload at least one product image.");
+      return null;
+    }
+    const fd = new FormData();
+    fd.append("topic", topic);
+    fd.append("key_points", points().join("\n"));
+    fd.append("tone", tone);
+    fd.append("duration_sec", String(duration));
+    fd.append("language", language);
+    fd.append("voice", "default");
+    fd.append("music", String(music));
+    files.forEach((f) => fd.append("images", f));
+    return fd;
+  }
+
+  // One-shot: generate the whole video immediately (no editing).
   async function handleGenerate() {
     if (!topic.trim()) return;
     setBusy(true);
     setJob(null);
+    setDraft(null);
     try {
-      const points = keyPoints
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
       let created: JobInfo;
       if (mode === "topic") {
         created = await generateFromTopic({
           topic,
-          key_points: points,
+          key_points: points(),
           tone,
           duration_sec: duration,
           language,
@@ -72,20 +100,11 @@ export default function Home() {
           music,
         });
       } else {
-        if (files.length === 0) {
-          alert("Please upload at least one product image.");
+        const fd = buildImageForm();
+        if (!fd) {
           setBusy(false);
           return;
         }
-        const fd = new FormData();
-        fd.append("topic", topic);
-        fd.append("key_points", points.join("\n"));
-        fd.append("tone", tone);
-        fd.append("duration_sec", String(duration));
-        fd.append("language", language);
-        fd.append("voice", "default");
-        fd.append("music", String(music));
-        files.forEach((f) => fd.append("images", f));
         created = await generateFromImages(fd);
       }
       setJob(created);
@@ -96,7 +115,61 @@ export default function Home() {
     }
   }
 
+  // Two-step: generate an editable script draft first.
+  async function handleGenerateScript() {
+    if (!topic.trim()) return;
+    setBusy(true);
+    setJob(null);
+    setDraft(null);
+    try {
+      let d: ScriptDraft;
+      if (mode === "topic") {
+        d = await scriptFromTopic({
+          topic,
+          key_points: points(),
+          tone,
+          duration_sec: duration,
+          language,
+          voice: "default",
+          music,
+        });
+      } else {
+        const fd = buildImageForm();
+        if (!fd) {
+          setBusy(false);
+          return;
+        }
+        d = await scriptFromImages(fd);
+      }
+      setDraft(d);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Render the (possibly edited) draft.
+  async function handleRender() {
+    if (!draft) return;
+    setBusy(true);
+    setJob(null);
+    try {
+      const created = await renderScript(draft);
+      setJob(created);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateScript(script: Script) {
+    if (draft) setDraft({ ...draft, script });
+  }
+
   const done = job?.status === "done" && job.video_url;
+  const rendering = job !== null && job.status !== "done" && job.status !== "error";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10">
@@ -106,7 +179,8 @@ export default function Home() {
             🎬 Video AI Studio
           </h1>
           <p className="mt-1 text-white/60">
-            Generate promo Reels &amp; Shorts from a topic or your product photos.
+            Generate promo Reels &amp; Shorts from a topic or product photos — edit
+            the AI script, then render.
           </p>
         </div>
         <ProviderBadge />
@@ -225,17 +299,52 @@ export default function Home() {
               </span>
             </button>
 
-            <button
-              onClick={handleGenerate}
-              disabled={busy || !topic.trim() || (job !== null && job.status !== "done" && job.status !== "error")}
-              className="w-full rounded-xl bg-brand py-3 font-semibold transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {busy ? "Starting…" : "✨ Generate Video"}
-            </button>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={handleGenerateScript}
+                disabled={busy || !topic.trim() || rendering}
+                className="rounded-xl bg-brand py-3 font-semibold transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-40"
+                title="Generate an editable script you can tweak before rendering"
+              >
+                {busy && !job ? "Working…" : "📝 Review & Edit"}
+              </button>
+              <button
+                onClick={handleGenerate}
+                disabled={busy || !topic.trim() || rendering}
+                className="rounded-xl border border-white/15 py-3 font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                title="Skip editing and render straight away"
+              >
+                ⚡ Quick Generate
+              </button>
+            </div>
           </div>
         </section>
 
-        {/* ---- Right: preview / progress ---- */}
+        {/* ---- Right: timeline editor OR preview / progress ---- */}
+        {draft && !done ? (
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+            <TimelineEditor script={draft.script} onChange={updateScript} />
+            <div className="mt-5 space-y-3">
+              {job && <JobProgress job={job} />}
+              <button
+                onClick={handleRender}
+                disabled={busy || rendering}
+                className="w-full rounded-xl bg-brand py-3 font-semibold transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {rendering ? "Rendering…" : "🎬 Render Video"}
+              </button>
+              <button
+                onClick={() => {
+                  setDraft(null);
+                  setJob(null);
+                }}
+                className="w-full rounded-xl border border-white/10 py-2 text-sm text-white/60 transition hover:bg-white/5"
+              >
+                ← Discard draft
+              </button>
+            </div>
+          </section>
+        ) : (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-white/50">
             Preview
@@ -262,17 +371,29 @@ export default function Home() {
             <div className="mt-5 space-y-4">
               <JobProgress job={job} />
               {done && (
-                <a
-                  href={job!.video_url!}
-                  download
-                  className="block w-full rounded-xl border border-brand py-2.5 text-center font-medium text-brand transition hover:bg-brand hover:text-white"
-                >
-                  ⬇ Download MP4
-                </a>
+                <>
+                  <a
+                    href={job!.video_url!}
+                    download
+                    className="block w-full rounded-xl border border-brand py-2.5 text-center font-medium text-brand transition hover:bg-brand hover:text-white"
+                  >
+                    ⬇ Download MP4
+                  </a>
+                  <button
+                    onClick={() => {
+                      setJob(null);
+                      setDraft(null);
+                    }}
+                    className="block w-full rounded-xl border border-white/10 py-2 text-sm text-white/60 transition hover:bg-white/5"
+                  >
+                    ✨ Make another
+                  </button>
+                </>
               )}
             </div>
           )}
         </section>
+        )}
       </div>
 
       <style jsx global>{`

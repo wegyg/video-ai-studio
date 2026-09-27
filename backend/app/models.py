@@ -70,6 +70,29 @@ class Script(BaseModel):
         return " ".join(s.narration for s in self.scenes)
 
 
+class ScriptDraft(BaseModel):
+    """Returned by the script-generation step for the editing timeline."""
+
+    script: Script
+    tone: Tone
+    language: str = "en"
+    voice: str = "default"
+    music: bool = True
+    mode: str = "topic"  # "topic" | "image"
+    image_job_id: str | None = None  # references uploaded images for image mode
+
+
+class RenderRequest(BaseModel):
+    """Render a (possibly edited) script into the final video."""
+
+    script: Script
+    tone: Tone = Tone.ENERGETIC
+    language: str = "en"
+    voice: str = "default"
+    music: bool = True
+    image_job_id: str | None = None  # reuse images uploaded during image-mode script gen
+
+
 class JobInfo(BaseModel):
     id: str
     status: JobStatus = JobStatus.QUEUED

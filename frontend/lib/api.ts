@@ -29,6 +29,31 @@ export type Tone = "energetic" | "professional" | "friendly" | "luxury" | "playf
 
 export type AspectRatio = "9:16" | "1:1" | "16:9";
 export type CaptionStyle = "static" | "pop" | "karaoke";
+export type TransitionType =
+  | "cut"
+  | "crossfade"
+  | "fade"
+  | "fade_white"
+  | "slide_left"
+  | "slide_up"
+  | "zoom_in";
+
+export interface TransitionSettings {
+  type: TransitionType;
+  duration_sec: number;
+  fade_in: boolean;
+  fade_out: boolean;
+}
+
+export const TRANSITIONS: { value: TransitionType; label: string }[] = [
+  { value: "crossfade", label: "Crossfade (dissolve)" },
+  { value: "fade", label: "Fade through black" },
+  { value: "fade_white", label: "Fade through white" },
+  { value: "slide_left", label: "Slide left" },
+  { value: "slide_up", label: "Slide up" },
+  { value: "zoom_in", label: "Zoom in" },
+  { value: "cut", label: "Hard cut (no transition)" },
+];
 
 export interface TopicPayload {
   topic: string;
@@ -40,6 +65,7 @@ export interface TopicPayload {
   music: boolean;
   aspect_ratio: AspectRatio;
   caption_style: CaptionStyle;
+  transition: TransitionSettings;
 }
 
 export interface Scene {
@@ -47,6 +73,8 @@ export interface Scene {
   narration: string;
   visual_query: string;
   duration_sec: number;
+  /** Transition INTO the next scene. null = use the project default. */
+  transition?: TransitionType | null;
 }
 
 export interface Script {
@@ -64,6 +92,7 @@ export interface ScriptDraft {
   music: boolean;
   aspect_ratio: AspectRatio;
   caption_style: CaptionStyle;
+  transition: TransitionSettings;
   mode: "topic" | "image" | "video";
   image_job_id: string | null;
   video_job_id: string | null;
@@ -138,6 +167,7 @@ export async function renderScript(draft: ScriptDraft): Promise<JobInfo> {
       music: draft.music,
       aspect_ratio: draft.aspect_ratio,
       caption_style: draft.caption_style,
+      transition: draft.transition,
       image_job_id: draft.image_job_id,
       video_job_id: draft.video_job_id,
     }),

@@ -28,7 +28,10 @@ add API keys.
   app produces a complete video; each key you add upgrades one stage — and if a
   premium call fails, it **falls back to the free path** so a render never breaks.
 - **Auto-fallback**: with zero keys the app still produces a complete video.
-- **9:16 rendering** via FFmpeg — Ken Burns zoom + burned-in animated captions
+- **9:16 / 1:1 / 16:9 rendering** via FFmpeg — Ken Burns zoom + burned-in animated captions
+- **Scene transitions** — crossfade, fade through black/white, slide, zoom (xfade), with start/end
+  fades and a per-scene override. Transitions overlap padded footage, so the timeline length and the
+  voice/caption sync never shift
   + narration + optional background music.
 - **Next.js UI** with live job progress and in-browser video preview + download.
 

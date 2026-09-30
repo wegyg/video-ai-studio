@@ -116,12 +116,21 @@ class Renderer:
         self.fps = fps
         self.font = font or _find_font()
 
-    async def render_scene(self, clip: SceneClip, out_path: str) -> str:
+    async def render_scene(self, clip: SceneClip, out_path: str, tail_pad: float = 0.0) -> str:
+        """Render one scene.
+
+        `tail_pad` renders EXTRA footage past the scene's own duration. A
+        transition to the next scene consumes exactly that much, so the scene
+        still occupies `duration` on the finished timeline and nothing else
+        (narration, captions, music) has to move. Captions keep their own timing
+        over `duration` and stay on screen through the pad.
+        """
         d = max(clip.duration, 1.0)
+        pad = max(0.0, tail_pad)
 
         if clip.kind == "video":
-            return await self._render_video_scene(clip, out_path, d)
-        return await self._render_still_scene(clip, out_path, d)
+            return await self._render_video_scene(clip, out_path, d, pad)
+        return await self._render_still_scene(clip, out_path, d, pad)
 
     def _reveal_steps(self, clip: SceneClip) -> list[tuple]:
         """Timeline of (reveal_arg) states across the scene for its style."""
@@ -166,8 +175,9 @@ class Renderer:
         parts.append("[vtmp]format=yuv420p[v]")
         return ";".join(parts)
 
-    async def _render_still_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
-        frames = int(d * self.fps)
+    async def _render_still_scene(self, clip: SceneClip, out_path: str, d: float, pad: float = 0.0) -> str:
+        total = d + pad
+        frames = int(total * self.fps)
         overlays = await self._build_overlays(clip)
         # Ken Burns zoom on the still background.
         zoom = (
@@ -183,13 +193,13 @@ class Renderer:
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc, "-map", "[v]",
-            "-t", f"{d}", "-r", str(self.fps),
+            "-t", f"{total}", "-r", str(self.fps),
             "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
         ]
         await _run(cmd)
         return out_path
 
-    async def _render_video_scene(self, clip: SceneClip, out_path: str, d: float) -> str:
+    async def _render_video_scene(self, clip: SceneClip, out_path: str, d: float, pad: float = 0.0) -> str:
         overlays = await self._build_overlays(clip)
         inputs = ["-stream_loop", "-1", "-i", clip.image_path]
         for ov in overlays:
@@ -202,7 +212,7 @@ class Renderer:
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc, "-map", "[v]",
-            "-t", f"{d}", "-r", str(self.fps),
+            "-t", f"{d + pad}", "-r", str(self.fps),
             "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
         ]
         await _run(cmd)
@@ -383,6 +393,62 @@ class Renderer:
         os.remove(list_file)
         return out_path
 
+    async def concat_with_transitions(
+        self,
+        clips: list[str],
+        transitions: list[tuple[str | None, float]],
+        out_path: str,
+        fade_in: float = 0.0,
+        fade_out: float = 0.0,
+    ) -> str:
+        """Stitch clips with xfade transitions in a single filter graph.
+
+        `transitions[i]` is the (xfade name, duration) between clip i and i+1;
+        a name of None is a hard cut. Every clip was rendered with a tail pad
+        equal to its outgoing transition, so xfade eats the pad and the finished
+        length stays sum(scene durations) — see render_scene().
+
+        offset for boundary i = (length of the chain so far) - duration, i.e. the
+        moment the next scene is supposed to start.
+        """
+        assert len(transitions) >= len(clips) - 1, "need one transition per boundary"
+        lengths = [await _probe_duration(c) for c in clips]
+
+        inputs: list[str] = []
+        for c in clips:
+            inputs += ["-i", c]
+        parts = [f"[{i}:v]settb=AVTB,fps={self.fps},format=yuv420p[c{i}]" for i in range(len(clips))]
+
+        cur = "c0"
+        acc = lengths[0]
+        for i in range(1, len(clips)):
+            name, dur = transitions[i - 1]
+            out = f"x{i}"
+            if not name or dur <= 0:
+                parts.append(f"[{cur}][c{i}]concat=n=2:v=1:a=0[{out}]")
+                acc += lengths[i]
+            else:
+                offset = max(0.0, acc - dur)
+                parts.append(
+                    f"[{cur}][c{i}]xfade=transition={name}:duration={dur:.3f}:offset={offset:.3f}[{out}]"
+                )
+                acc += lengths[i] - dur
+            cur = out
+
+        tail = []
+        if fade_in > 0:
+            tail.append(f"fade=t=in:st=0:d={fade_in:.3f}")
+        if fade_out > 0:
+            tail.append(f"fade=t=out:st={max(0.0, acc - fade_out):.3f}:d={fade_out:.3f}")
+        parts.append(f"[{cur}]{','.join(tail) if tail else 'null'}[v]")
+
+        await _run([
+            "ffmpeg", "-y", *inputs,
+            "-filter_complex", ";".join(parts), "-map", "[v]",
+            "-r", str(self.fps), "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path,
+        ])
+        return out_path
+
     async def concat_audio(self, audio_paths: list[str], out_path: str) -> str:
         valid = [a for a in audio_paths if a and os.path.exists(a)]
         if not valid:
@@ -468,9 +534,20 @@ class Renderer:
         return out_path
 
     async def mux(
-        self, video_path: str, audio_path: str, out_path: str, music_path: str | None = None
+        self,
+        video_path: str,
+        audio_path: str,
+        out_path: str,
+        music_path: str | None = None,
+        fade_in: float = 0.0,
+        fade_out: float = 0.0,
     ) -> str:
         vdur = await _probe_duration(video_path)
+        afades = ""
+        if fade_in > 0:
+            afades += f",afade=t=in:st=0:d={fade_in:.3f}"
+        if fade_out > 0:
+            afades += f",afade=t=out:st={max(0.0, vdur - fade_out):.3f}:d={fade_out:.3f}"
         if music_path and os.path.exists(music_path):
             # mix narration (a) with looped, ducked music (b)
             cmd = [
@@ -479,10 +556,18 @@ class Renderer:
                 "-i", audio_path,
                 "-stream_loop", "-1", "-i", music_path,
                 "-filter_complex",
-                "[2:a]volume=0.18[m];[1:a][m]amix=inputs=2:duration=first[a]",
+                f"[2:a]volume=0.18[m];[1:a][m]amix=inputs=2:duration=first{afades}[a]",
                 "-map", "0:v", "-map", "[a]",
                 "-c:v", "copy", "-c:a", "aac",
                 "-t", f"{vdur}", "-shortest", out_path,
+            ]
+        elif afades:
+            cmd = [
+                "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
+                "-filter_complex", f"[1:a]anull{afades}[a]",
+                "-map", "0:v", "-map", "[a]",
+                "-c:v", "copy", "-c:a", "aac",
+                "-t", f"{vdur}", out_path,
             ]
         else:
             cmd = [

@@ -74,7 +74,9 @@ it in `registry.py`. Nothing else changes.
 
 **On Windows**, double-click `start.bat` instead — it checks for Python, Node and
 FFmpeg, tells you where to get anything missing, then starts both halves and opens
-the browser.
+the browser. To let someone outside your network use it, `share.bat` does the same
+and adds a Cloudflare quick tunnel behind a password. See
+[docs/windows-share.md](docs/windows-share.md).
 
 ### 0) One-time environment setup
 ```bash

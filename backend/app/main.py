@@ -13,6 +13,9 @@ from fastapi.responses import FileResponse
 from app.config import get_settings
 from app.models import (
     AspectRatio,
+    MotionIntensity,
+    MotionSettings,
+    MotionType,
     TransitionSettings,
     TransitionType,
     CaptionStyle,
@@ -102,6 +105,7 @@ async def script_topic(req: TopicRequest):
         "aspect_ratio": req.aspect_ratio,
         "caption_style": req.caption_style,
         "transition": req.transition,
+        "motion": req.motion,
         "mode": "topic",
         "image_job_id": None,
     }
@@ -122,6 +126,8 @@ async def script_image(
     transition_duration_sec: float = Form(0.5),
     fade_in: bool = Form(True),
     fade_out: bool = Form(True),
+    motion_type: MotionType = Form(MotionType.AUTO),
+    motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
     images: list[UploadFile] = File(...),
 ):
     """Generate an editable script draft from product images. Uploaded images
@@ -151,6 +157,7 @@ async def script_image(
             type=transition_type, duration_sec=transition_duration_sec,
             fade_in=fade_in, fade_out=fade_out,
         ),
+        motion=MotionSettings(type=motion_type, intensity=motion_intensity),
     )
     script = await pipeline.generate_script(req)
     return {
@@ -162,6 +169,7 @@ async def script_image(
         "aspect_ratio": aspect_ratio,
         "caption_style": caption_style,
         "transition": req.transition,
+        "motion": req.motion,
         "mode": "image",
         "image_job_id": image_job_id,
     }
@@ -182,6 +190,8 @@ async def script_video(
     transition_duration_sec: float = Form(0.5),
     fade_in: bool = Form(True),
     fade_out: bool = Form(True),
+    motion_type: MotionType = Form(MotionType.AUTO),
+    motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode: upload your OWN footage, get an editable script draft.
@@ -206,12 +216,14 @@ async def script_video(
             type=transition_type, duration_sec=transition_duration_sec,
             fade_in=fade_in, fade_out=fade_out,
         ),
+        motion=MotionSettings(type=motion_type, intensity=motion_intensity),
     )
     script = await pipeline.generate_script(req)
     return {
         "script": script, "tone": tone, "language": language, "voice": voice,
         "music": music, "aspect_ratio": aspect_ratio, "caption_style": caption_style,
         "transition": req.transition,
+        "motion": req.motion,
         "mode": "video", "image_job_id": None,
         "video_job_id": video_job_id,
     }
@@ -245,6 +257,7 @@ async def render_script(req: RenderRequest, bg: BackgroundTasks):
         aspect_ratio=req.aspect_ratio,
         caption_style=req.caption_style,
         transition=req.transition,
+        motion=req.motion,
     )
 
     image_paths = _stashed_files(req.image_job_id, "upload_")
@@ -283,6 +296,8 @@ async def generate_image(
     transition_duration_sec: float = Form(0.5),
     fade_in: bool = Form(True),
     fade_out: bool = Form(True),
+    motion_type: MotionType = Form(MotionType.AUTO),
+    motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
     images: list[UploadFile] = File(...),
 ):
     if not images:
@@ -313,6 +328,7 @@ async def generate_image(
             type=transition_type, duration_sec=transition_duration_sec,
             fade_in=fade_in, fade_out=fade_out,
         ),
+        motion=MotionSettings(type=motion_type, intensity=motion_intensity),
     )
     job = JobInfo(id=job_id, mode="image", status=JobStatus.QUEUED)
     JOBS[job_id] = job
@@ -336,6 +352,8 @@ async def generate_video(
     transition_duration_sec: float = Form(0.5),
     fade_in: bool = Form(True),
     fade_out: bool = Form(True),
+    motion_type: MotionType = Form(MotionType.AUTO),
+    motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode in one shot: upload footage, get the finished promo."""
@@ -367,6 +385,7 @@ async def generate_video(
             type=transition_type, duration_sec=transition_duration_sec,
             fade_in=fade_in, fade_out=fade_out,
         ),
+        motion=MotionSettings(type=motion_type, intensity=motion_intensity),
     )
     job = JobInfo(id=job_id, mode="video", status=JobStatus.QUEUED)
     JOBS[job_id] = job

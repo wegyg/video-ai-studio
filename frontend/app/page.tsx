@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   AspectRatio,
   CaptionStyle,
+  MOTIONS,
+  MOTION_INTENSITIES,
+  MotionIntensity,
+  MotionSettings,
+  MotionType,
   TRANSITIONS,
   TransitionSettings,
   TransitionType,
@@ -52,6 +57,8 @@ export default function Home() {
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("pop");
   const [transition, setTransition] = useState<TransitionType>("crossfade");
   const [transitionSec, setTransitionSec] = useState(0.5);
+  const [motion, setMotion] = useState<MotionType>("auto");
+  const [motionIntensity, setMotionIntensity] = useState<MotionIntensity>("medium");
   const [edgeFade, setEdgeFade] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
   const [videos, setVideos] = useState<File[]>([]);
@@ -99,10 +106,15 @@ export default function Home() {
       aspect_ratio: ratio,
       caption_style: captionStyle,
       transition: transitionSettings(),
+      motion: motionSettings(),
     };
   }
 
   // Build a multipart form for image/video modes. `field` is "images"|"videos".
+  function motionSettings(): MotionSettings {
+    return { type: motion, intensity: motionIntensity };
+  }
+
   function transitionSettings(): TransitionSettings {
     return {
       type: transition,
@@ -129,6 +141,8 @@ export default function Home() {
     fd.append("caption_style", captionStyle);
     fd.append("transition_type", transition);
     fd.append("transition_duration_sec", String(transitionSec));
+    fd.append("motion_type", motion);
+    fd.append("motion_intensity", motionIntensity);
     fd.append("fade_in", String(edgeFade));
     fd.append("fade_out", String(edgeFade));
     uploads.forEach((f) => fd.append(field, f));
@@ -195,7 +209,13 @@ export default function Home() {
         d = await scriptFromVideos(fd);
       }
       // carry the UI ratio/caption choices into the draft for rendering
-      d = { ...d, aspect_ratio: ratio, caption_style: captionStyle, transition: transitionSettings() };
+      d = {
+        ...d,
+        aspect_ratio: ratio,
+        caption_style: captionStyle,
+        transition: transitionSettings(),
+        motion: motionSettings(),
+      };
       setDraft(d);
     } catch (e) {
       alert((e as Error).message);
@@ -409,6 +429,36 @@ export default function Home() {
               </Field>
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Camera motion">
+                <select
+                  value={motion}
+                  onChange={(e) => setMotion(e.target.value as MotionType)}
+                  className="input"
+                >
+                  {MOTIONS.map((m) => (
+                    <option key={m.value} value={m.value} className="bg-[#161226]">
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Motion strength">
+                <select
+                  value={motionIntensity}
+                  onChange={(e) => setMotionIntensity(e.target.value as MotionIntensity)}
+                  disabled={motion === "none"}
+                  className="input disabled:opacity-40"
+                >
+                  {MOTION_INTENSITIES.map((m) => (
+                    <option key={m.value} value={m.value} className="bg-[#161226]">
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
             <button
               type="button"
               onClick={() => setEdgeFade((v) => !v)}
@@ -486,6 +536,8 @@ export default function Home() {
               script={draft.script}
               onChange={updateScript}
               defaultTransition={draft.transition?.type ?? transition}
+              defaultMotion={draft.motion?.type ?? motion}
+              defaultMotionIntensity={draft.motion?.intensity ?? motionIntensity}
             />
             <div className="mt-5 space-y-3">
               {job && <JobProgress job={job} />}

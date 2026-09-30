@@ -18,6 +18,36 @@ from dataclasses import dataclass
 from PIL import Image, ImageDraw, ImageFont
 
 
+# The background is prepared at UPSCALE x the output size before any pan/zoom.
+# Crop/zoom offsets land on whole pixels of that larger image, so after the
+# downscale to the output size the movement lands on sub-pixels — that is what
+# keeps a slow pan from stepping (jittering) one pixel at a time.
+#
+# The factor sets how fine that sub-pixel grid is: 1/UPSCALE of an output pixel.
+# It has to stay clear of the slowest movement we offer, a subtle pan, which
+# crosses roughly 0.4 output pixels per frame. At 2x the grid (0.5px) is coarser
+# than that step, so such a pan froze for a frame and then jumped ~2px. 4x puts
+# the grid at 0.25px and the movement lands on a new position every frame.
+# Measured on the verification grid: smoothness (min/mean frame delta) on a
+# subtle pan went 0.19 -> 0.68, for about 30% more time on a 3-scene render.
+UPSCALE = 4
+
+# Motion strength: (zoom factor, pan travel as a fraction of the upscaled frame).
+MOTION_STRENGTH = {
+    "weak": (1.05, 0.06),
+    "medium": (1.10, 0.12),
+    "strong": (1.18, 0.20),
+}
+# A still is enlarged once per scene, but footage pays that cost on every single
+# frame, so video uses a smaller canvas. It still gives a pan far more margin than
+# it can travel, and footage is already full of movement, so the coarser sub-pixel
+# grid has nothing to show against it.
+VIDEO_UPSCALE = 2
+
+# Footage is already moving, so cap camera movement on video backgrounds.
+VIDEO_MAX_INTENSITY = "weak"
+
+
 @dataclass
 class SceneClip:
     image_path: str  # still image OR source video clip depending on `kind`
@@ -28,6 +58,8 @@ class SceneClip:
     is_hook: bool = False  # first scene -> bigger, punchier caption
     kind: str = "image"  # "image" | "video"
     caption_style: str = "pop"  # "static" | "pop" | "karaoke"
+    motion: str = "zoom_in"  # see models.MotionType (already resolved: never "auto")
+    motion_intensity: str = "medium"
 
 
 def _escape_drawtext(text: str) -> str:
@@ -116,6 +148,81 @@ class Renderer:
         self.fps = fps
         self.font = font or _find_font()
 
+    def _motion_chain(self, clip: SceneClip, total: float, frames: int) -> str:
+        """Filter chain that turns input #0 into a moving [bg] at the output size.
+
+        The background is first covered to UPSCALE x the output size, so a pan or
+        zoom always has real pixels to move into — there is no way to expose a
+        black edge, whatever the aspect ratio. Stills use zoompan; video uses a
+        moving crop (zoompan would restart per input frame).
+        """
+        up = VIDEO_UPSCALE if clip.kind == "video" else UPSCALE
+        bw, bh = self.w * up, self.h * up
+        cover = (
+            f"scale={bw}:{bh}:force_original_aspect_ratio=increase,"
+            f"crop={bw}:{bh},setsar=1"
+        )
+        motion = clip.motion if clip.motion in {
+            "none", "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down",
+        } else "zoom_in"
+        strength = clip.motion_intensity if clip.motion_intensity in MOTION_STRENGTH else "medium"
+        if clip.kind == "video" and strength != "weak":
+            strength = VIDEO_MAX_INTENSITY
+        zmax, travel = MOTION_STRENGTH[strength]
+
+        if motion == "none":
+            return f"[0:v]scale={self.w}:{self.h}:force_original_aspect_ratio=increase," \
+                   f"crop={self.w}:{self.h},setsar=1,format=rgba[bg]"
+
+        if clip.kind == "video":
+            # A crop window of the upscaled frame, moved with time, then downscaled.
+            ramp = f"min(1\,t/{max(total, 0.1):.3f})"
+            if motion in ("zoom_in", "zoom_out"):
+                # crop size cannot change per frame, so emulate zoom with a slow
+                # push across the extra margin instead of resizing the window
+                cw, ch = f"iw/{zmax:.4f}", f"ih/{zmax:.4f}"
+                grow = ramp if motion == "zoom_in" else f"(1-{ramp})"
+                x = f"(iw-{cw})*0.5*(1-{grow}*0.6)"
+                y = f"(ih-{ch})*0.5*(1-{grow}*0.6)"
+            else:
+                z = 1.0 + travel
+                cw, ch = f"iw/{z:.4f}", f"ih/{z:.4f}"
+                if motion == "pan_left":
+                    x, y = f"(iw-{cw})*(1-{ramp})", f"(ih-{ch})/2"
+                elif motion == "pan_right":
+                    x, y = f"(iw-{cw})*{ramp}", f"(ih-{ch})/2"
+                elif motion == "pan_up":
+                    x, y = f"(iw-{cw})/2", f"(ih-{ch})*(1-{ramp})"
+                else:  # pan_down
+                    x, y = f"(iw-{cw})/2", f"(ih-{ch})*{ramp}"
+            return (
+                f"[0:v]{cover},crop={cw}:{ch}:x='{x}':y='{y}',"
+                f"scale={self.w}:{self.h},setsar=1,format=rgba[bg]"
+            )
+
+        # Stills: zoompan over the upscaled image. `on` is the output frame index.
+        last = max(frames - 1, 1)
+        ramp = f"on/{last}"
+        if motion == "zoom_in":
+            z, x, y = f"1+{zmax - 1:.4f}*{ramp}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        elif motion == "zoom_out":
+            z, x, y = f"{zmax:.4f}-{zmax - 1:.4f}*{ramp}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        else:
+            z = f"{1.0 + travel:.4f}"  # hold a constant zoom so the pan has margin
+            span_x, span_y = "(iw-iw/zoom)", "(ih-ih/zoom)"
+            if motion == "pan_left":
+                x, y = f"{span_x}*(1-{ramp})", f"{span_y}/2"
+            elif motion == "pan_right":
+                x, y = f"{span_x}*{ramp}", f"{span_y}/2"
+            elif motion == "pan_up":
+                x, y = f"{span_x}/2", f"{span_y}*(1-{ramp})"
+            else:  # pan_down
+                x, y = f"{span_x}/2", f"{span_y}*{ramp}"
+        return (
+            f"[0:v]{cover},zoompan=z='{z}':d={frames}:x='{x}':y='{y}':"
+            f"s={self.w}x{self.h}:fps={self.fps},format=rgba[bg]"
+        )
+
     async def render_scene(self, clip: SceneClip, out_path: str, tail_pad: float = 0.0) -> str:
         """Render one scene.
 
@@ -179,17 +286,10 @@ class Renderer:
         total = d + pad
         frames = int(total * self.fps)
         overlays = await self._build_overlays(clip)
-        # Ken Burns zoom on the still background.
-        zoom = (
-            f"scale={self.w*2}:-1,"
-            f"zoompan=z='min(zoom+0.0009,1.08)':d={frames}:"
-            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-            f"s={self.w}x{self.h}:fps={self.fps},format=rgba[bg]"
-        )
         inputs = ["-loop", "1", "-i", clip.image_path]
         for ov in overlays:
             inputs += ["-i", ov]
-        fc = f"[0:v]{zoom};" + self._overlay_filter(len(overlays), d, "bg")
+        fc = self._motion_chain(clip, total, frames) + ";" + self._overlay_filter(len(overlays), d, "bg")
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc, "-map", "[v]",
@@ -204,11 +304,11 @@ class Renderer:
         inputs = ["-stream_loop", "-1", "-i", clip.image_path]
         for ov in overlays:
             inputs += ["-i", ov]
-        bg = (
-            f"[0:v]scale={self.w}:{self.h}:force_original_aspect_ratio=increase,"
-            f"crop={self.w}:{self.h},setsar=1,format=rgba[bg];"
+        fc = (
+            self._motion_chain(clip, d + pad, int((d + pad) * self.fps))
+            + ";"
+            + self._overlay_filter(len(overlays), d, "bg")
         )
-        fc = bg + self._overlay_filter(len(overlays), d, "bg")
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc, "-map", "[v]",

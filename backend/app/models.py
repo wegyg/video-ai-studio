@@ -48,6 +48,43 @@ class CaptionStyle(str, Enum):
     KARAOKE = "karaoke"    # all words shown, current word highlighted
 
 
+class MotionType(str, Enum):
+    """Camera movement applied to a scene background (Ken Burns family)."""
+
+    NONE = "none"
+    ZOOM_IN = "zoom_in"
+    ZOOM_OUT = "zoom_out"
+    PAN_LEFT = "pan_left"
+    PAN_RIGHT = "pan_right"
+    PAN_UP = "pan_up"
+    PAN_DOWN = "pan_down"
+    AUTO = "auto"  # a different direction per scene, never twice in a row
+
+
+class MotionIntensity(str, Enum):
+    WEAK = "weak"
+    MEDIUM = "medium"
+    STRONG = "strong"
+
+
+class MotionSettings(BaseModel):
+    """Project-wide camera-movement defaults. Scenes may override both fields."""
+
+    type: MotionType = MotionType.AUTO
+    intensity: MotionIntensity = MotionIntensity.MEDIUM
+
+
+# What AUTO cycles through. No entry repeats next to another (including the wrap).
+AUTO_MOTION_CYCLE: list[MotionType] = [
+    MotionType.ZOOM_IN,
+    MotionType.PAN_LEFT,
+    MotionType.ZOOM_OUT,
+    MotionType.PAN_RIGHT,
+    MotionType.PAN_UP,
+    MotionType.PAN_DOWN,
+]
+
+
 class TransitionType(str, Enum):
     """How one scene gives way to the next (ffmpeg xfade transitions)."""
 
@@ -98,6 +135,7 @@ class TopicRequest(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.VERTICAL
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
+    motion: MotionSettings = Field(default_factory=MotionSettings)
 
 
 class ImageRequest(BaseModel):
@@ -113,6 +151,7 @@ class ImageRequest(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.VERTICAL
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
+    motion: MotionSettings = Field(default_factory=MotionSettings)
     # image file paths are attached by the API layer after upload
 
 
@@ -125,6 +164,9 @@ class Scene(BaseModel):
     duration_sec: float = 3.0
     # Transition INTO the next scene. None = use the project default.
     transition: TransitionType | None = None
+    # Camera movement for this scene. None = use the project default.
+    motion: MotionType | None = None
+    motion_intensity: MotionIntensity | None = None
 
 
 class Script(BaseModel):
@@ -149,6 +191,7 @@ class ScriptDraft(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.VERTICAL
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
+    motion: MotionSettings = Field(default_factory=MotionSettings)
     mode: str = "topic"  # "topic" | "image" | "video"
     image_job_id: str | None = None  # references uploaded images for image mode
     video_job_id: str | None = None  # references uploaded footage for video mode
@@ -165,6 +208,7 @@ class RenderRequest(BaseModel):
     aspect_ratio: AspectRatio = AspectRatio.VERTICAL
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
+    motion: MotionSettings = Field(default_factory=MotionSettings)
     image_job_id: str | None = None  # reuse images uploaded during image-mode script gen
     video_job_id: str | None = None  # reuse footage uploaded during video-mode script gen
 

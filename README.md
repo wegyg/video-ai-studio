@@ -21,17 +21,21 @@ add API keys.
   | Script | Template engine | OpenAI LLM |
   | Voice | gTTS (free) → silent fallback | OpenAI TTS |
   | Visuals | Gradient cards / photo compositing | Pexels stock video (free key) |
-  | **Video** | **Ken Burns zoom** | **fal.ai / Runway image-to-video** (animate product photos) |
+  | **Video** | **Camera motion (zoom / pan)** | **fal.ai / Runway image-to-video** (animate product photos) |
   | Music | Procedural bed | Procedural bed (or your own tracks) |
 
   Every stage is a pluggable provider (adapter pattern). With **zero keys** the
   app produces a complete video; each key you add upgrades one stage — and if a
   premium call fails, it **falls back to the free path** so a render never breaks.
 - **Auto-fallback**: with zero keys the app still produces a complete video.
-- **9:16 / 1:1 / 16:9 rendering** via FFmpeg — Ken Burns zoom + burned-in animated captions
+- **9:16 / 1:1 / 16:9 rendering** via FFmpeg — camera motion + burned-in animated captions
 - **Scene transitions** — crossfade, fade through black/white, slide, zoom (xfade), with start/end
   fades and a per-scene override. Transitions overlap padded footage, so the timeline length and the
   voice/caption sync never shift
+- **Camera motion** — zoom in/out, pan left/right/up/down, or `auto` (varies per scene and never
+  repeats back to back), at three strengths, set per project or per scene. The background is covered
+  above the output size first, so a pan always has real pixels to move into and never exposes a black
+  edge in any aspect ratio; stock video gets a lighter touch since the footage already moves
   + narration + optional background music.
 - **Next.js UI** with live job progress and in-browser video preview + download.
 

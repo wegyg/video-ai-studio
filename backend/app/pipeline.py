@@ -73,7 +73,10 @@ class Pipeline:
         for oi, ov in enumerate(overlays):
             png = os.path.join(job_dir, f"graphic_{oi}.png")
             try:
-                drawn = render_overlay_png(ov, renderer.w, renderer.h, png, renderer.font)
+                # pick a font that can draw this overlay's own text, so a Korean
+                # label does not come out as empty boxes
+                drawn = render_overlay_png(ov, renderer.w, renderer.h, png,
+                                           renderer.font_for(ov.text))
             except Exception:
                 drawn = None
             if not drawn:

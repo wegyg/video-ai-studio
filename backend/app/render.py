@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 
@@ -427,7 +428,7 @@ class Renderer:
         full_text = _wrap(clean)  # measure against the FULL caption for stable layout
 
         base = self.w // 15 if clip.is_hook else self.w // 18
-        font = self._load_font(size=max(52, base))
+        font = self._load_font(size=max(52, base), text=clean)
         spacing = 16
 
         # Stable panel sized to the full caption (so it doesn't jump per frame).
@@ -545,10 +546,23 @@ class Renderer:
     def _make_caption_overlay(self, dst: str, clip: "SceneClip", reveal=None) -> None:
         self._draw_caption_layer(clip, reveal).save(dst, "PNG")
 
-    def _load_font(self, size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
-        if self.font and os.path.exists(self.font):
+    def font_for(self, text: str = "") -> str:
+        """Font path able to draw `text`.
+
+        The configured font wins unless the text needs CJK glyphs it does not
+        carry, in which case a CJK face is used for that line only.
+        """
+        if text and _CJK_RE.search(text):
+            cjk = _find_font(text)
+            if cjk:
+                return cjk
+        return self.font
+
+    def _load_font(self, size: int, text: str = "") -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
+        path = self.font_for(text)
+        if path and os.path.exists(path):
             try:
-                return ImageFont.truetype(self.font, size)
+                return ImageFont.truetype(path, size)
             except Exception:
                 pass
         return ImageFont.load_default()
@@ -731,6 +745,9 @@ class Renderer:
                 f"[2:a]volume=0.18[m];[1:a][m]amix=inputs=2:duration=first{afades}[a]",
                 "-map", "0:v", "-map", "[a]",
                 "-c:v", "copy", "-c:a", "aac",
+                # moov atom up front so a phone or browser can start playing
+                # before the whole file has arrived
+                "-movflags", "+faststart",
                 "-t", f"{vdur}", "-shortest", out_path,
             ]
         elif afades:
@@ -739,6 +756,7 @@ class Renderer:
                 "-filter_complex", f"[1:a]anull{afades}[a]",
                 "-map", "0:v", "-map", "[a]",
                 "-c:v", "copy", "-c:a", "aac",
+                "-movflags", "+faststart",
                 "-t", f"{vdur}", out_path,
             ]
         else:
@@ -746,6 +764,7 @@ class Renderer:
                 "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "copy", "-c:a", "aac",
+                "-movflags", "+faststart",
                 "-t", f"{vdur}", out_path,
             ]
         await _run(cmd)
@@ -767,16 +786,44 @@ def _cover_to(img: Image.Image, w: int, h: int) -> Image.Image:
     return img.crop((left, top, left + w, top + h))
 
 
-def _find_font() -> str:
-    candidates = [
-        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/gnu-free/FreeSansBold.ttf",
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
+_LATIN_FONTS = [
+    "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/gnu-free/FreeSansBold.ttf",
+]
+
+# Korean, Japanese and Chinese need a font that actually carries those glyphs.
+# The Latin fonts above do not: PIL draws a "tofu" box per character instead, so
+# a Korean caption came out as a row of empty rectangles.
+_CJK_FONTS = [
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+]
+
+# Hangul, kana, and CJK ideographs — enough to decide which font a line needs.
+_CJK_RE = re.compile(
+    r"[\u1100-\u11FF\u3040-\u30FF\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF"
+    r"\uA960-\uA97F\uAC00-\uD7AF\uF900-\uFAFF]"
+)
+
+
+def _find_font(text: str = "") -> str:
+    """Best available font, preferring one that can draw `text`.
+
+    Latin faces stay the default so existing output is unchanged; a CJK face is
+    only reached for when the text actually contains CJK characters, and falls
+    back to Latin if no CJK font is installed.
+    """
+    groups = [_CJK_FONTS, _LATIN_FONTS] if text and _CJK_RE.search(text) else [_LATIN_FONTS]
+    for group in groups:
+        for c in group:
+            if os.path.exists(c):
+                return c
     return ""  # ffmpeg will use its built-in default

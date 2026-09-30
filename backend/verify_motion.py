@@ -213,6 +213,10 @@ async def run_case(motion: MotionType, ratio: AspectRatio, out_root: str, sheet:
                    render: bool = True, pattern: bool = False,
                    intensity: MotionIntensity = MotionIntensity.MEDIUM) -> dict:
     settings = get_settings()
+    # Pin the background provider: with a PEXELS_API_KEY present the registry
+    # would hand back real footage, and every measurement here assumes the
+    # offline gradient. Results have to be reproducible with or without a key.
+    settings.visuals_provider = "gradient"
     pipe = Pipeline(settings)
     if pattern:
         pipe.registry.visuals = lambda: PatternVisualProvider()  # type: ignore[method-assign]

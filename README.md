@@ -72,13 +72,18 @@ it in `registry.py`. Nothing else changes.
 - Python 3.11+ (or [uv](https://docs.astral.sh/uv/)), Node.js 18+
 - FFmpeg — installed for you by `scripts/setup_ffmpeg.sh` (no system packages needed)
 
+**On Windows**, double-click `start.bat` instead — it checks for Python, Node and
+FFmpeg, tells you where to get anything missing, then starts both halves and opens
+the browser.
+
 ### 0) One-time environment setup
 ```bash
 bash scripts/setup_ffmpeg.sh   # static FFmpeg with the filters we need, on PATH
+bash scripts/setup_fonts.sh    # CJK glyphs, for Korean/Japanese/Chinese captions
 bash scripts/setup_python.sh   # backend/.venv + dependencies
 ```
-Both scripts are idempotent — run them as often as you like. `run_server.sh` and
-`run_e2e.sh` call them on start, so the usual flow needs no manual step.
+All three scripts are idempotent — run them as often as you like. `run_server.sh`
+and `run_e2e.sh` call them on start, so the usual flow needs no manual step.
 
 ### 1) Backend
 ```bash
@@ -97,6 +102,20 @@ npm run dev                           # http://localhost:3000
 Open http://localhost:3000, pick a mode, and generate. 🎉
 
 ---
+
+## ☁️ Deploying
+
+Frontend on Vercel, backend on Render, both on their free plans — see
+[docs/deploy.md](docs/deploy.md) for the walkthrough, the environment variables,
+and what the free plans cost you in practice.
+
+The short version: `render.yaml` and `backend/Dockerfile` (FFmpeg + CJK fonts)
+define the backend; Vercel needs only `BACKEND_URL`. The browser talks to the
+Vercel origin and Vercel proxies `/api/*` onward, so no CORS setup is required.
+
+One number worth knowing up front: a 512 MB instance cannot render at 1080p. The
+deployed default is `VIDEO_BASE_HEIGHT=432`, which peaks at 435 MB; 540 needs
+566 MB and is killed. Raise it once you are on an instance with more memory.
 
 ## 🔌 Free tier → Premium tier
 

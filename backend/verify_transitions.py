@@ -61,6 +61,10 @@ async def worst_caption_offset(job_dir: str, starts: list[float]) -> float:
 
 async def run_case(kind: TransitionType, ratio: AspectRatio, out_root: str, sheet: bool) -> dict:
     settings = get_settings()
+    # Pin the background provider: with a PEXELS_API_KEY present the registry
+    # would hand back real footage, and every measurement here assumes the
+    # offline gradient. Results have to be reproducible with or without a key.
+    settings.visuals_provider = "gradient"
     pipe = Pipeline(settings)
     tag = f"{kind.value}_{ratio.value.replace(':', 'x')}"
     job_dir = os.path.join(out_root, tag)

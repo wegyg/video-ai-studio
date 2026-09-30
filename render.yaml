@@ -1,0 +1,37 @@
+# Render Blueprint — creates the backend service when you connect this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: video-ai-studio-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: singapore          # closest to Korea of Render's regions
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # --- secrets: left blank on purpose ---------------------------------
+      # `sync: false` means Render asks for the value in its dashboard and it is
+      # never stored in this file. Do not paste keys here.
+      - key: PEXELS_API_KEY
+        sync: false
+      # Your Vercel URL, e.g. https://your-app.vercel.app
+      # Only needed if the browser calls the backend directly; the Vercel proxy
+      # in next.config.mjs makes requests same-origin, which needs no CORS.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # --- sizing ---------------------------------------------------------
+      # 432 fits a render into the 512 MB free instance. See the Dockerfile for
+      # the measurements behind that number.
+      - key: VIDEO_BASE_HEIGHT
+        value: "432"
+      - key: OUTPUT_DIR
+        value: /tmp/output
+      # gTTS (free Korean voice) and Pexels both need outbound HTTP, which the
+      # free plan allows.
+      - key: TTS_PROVIDER
+        value: auto
+      - key: VISUALS_PROVIDER
+        value: auto

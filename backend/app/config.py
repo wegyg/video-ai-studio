@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     # Where generated jobs / assets / final videos are written.
     output_dir: str = "output"
 
+    # --- Output size ---
+    # Short side of the video: 1080 gives 1080x1920 for 9:16, 720 gives 720x1280.
+    #
+    # This is the setting that decides whether rendering fits in a small host.
+    # Measured peak memory for a single 9:16 scene: 1080 -> 747 MB, 720 -> 390 MB.
+    # A 512 MB instance (Render's free tier) cannot render at 1080 and is killed
+    # part-way through, so deployments there set 720. Lowering MOTION_UPSCALE
+    # instead barely helps — see the note in render.py.
+    video_base_height: int = 1080
+
     # --- Provider selection (auto | free | <provider name>) ---
     script_provider: str = "auto"
     tts_provider: str = "auto"
@@ -54,8 +64,6 @@ class Settings(BaseSettings):
     runway_video_model: str = "gen4_turbo"
 
     # --- Rendering defaults (9:16 vertical short) ---
-    video_width: int = 1080
-    video_height: int = 1920
     video_fps: int = 30
 
     # --- Background music ---

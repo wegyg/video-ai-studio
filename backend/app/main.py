@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 from app.config import get_settings
 from app.models import (
     AspectRatio,
+    TransitionSettings,
+    TransitionType,
     CaptionStyle,
     ImageRequest,
     JobInfo,
@@ -97,6 +99,9 @@ async def script_topic(req: TopicRequest):
         "language": req.language,
         "voice": req.voice,
         "music": req.music,
+        "aspect_ratio": req.aspect_ratio,
+        "caption_style": req.caption_style,
+        "transition": req.transition,
         "mode": "topic",
         "image_job_id": None,
     }
@@ -113,6 +118,10 @@ async def script_image(
     music: bool = Form(True),
     aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
     caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    transition_type: TransitionType = Form(TransitionType.CROSSFADE),
+    transition_duration_sec: float = Form(0.5),
+    fade_in: bool = Form(True),
+    fade_out: bool = Form(True),
     images: list[UploadFile] = File(...),
 ):
     """Generate an editable script draft from product images. Uploaded images
@@ -138,6 +147,10 @@ async def script_image(
         music=music,
         aspect_ratio=aspect_ratio,
         caption_style=caption_style,
+        transition=TransitionSettings(
+            type=transition_type, duration_sec=transition_duration_sec,
+            fade_in=fade_in, fade_out=fade_out,
+        ),
     )
     script = await pipeline.generate_script(req)
     return {
@@ -148,6 +161,7 @@ async def script_image(
         "music": music,
         "aspect_ratio": aspect_ratio,
         "caption_style": caption_style,
+        "transition": req.transition,
         "mode": "image",
         "image_job_id": image_job_id,
     }
@@ -164,6 +178,10 @@ async def script_video(
     music: bool = Form(True),
     aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
     caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    transition_type: TransitionType = Form(TransitionType.CROSSFADE),
+    transition_duration_sec: float = Form(0.5),
+    fade_in: bool = Form(True),
+    fade_out: bool = Form(True),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode: upload your OWN footage, get an editable script draft.
@@ -184,11 +202,16 @@ async def script_video(
         key_points=[p.strip() for p in key_points.split("\n") if p.strip()],
         tone=tone, duration_sec=duration_sec, language=language, voice=voice, music=music,
         aspect_ratio=aspect_ratio, caption_style=caption_style,
+        transition=TransitionSettings(
+            type=transition_type, duration_sec=transition_duration_sec,
+            fade_in=fade_in, fade_out=fade_out,
+        ),
     )
     script = await pipeline.generate_script(req)
     return {
         "script": script, "tone": tone, "language": language, "voice": voice,
         "music": music, "aspect_ratio": aspect_ratio, "caption_style": caption_style,
+        "transition": req.transition,
         "mode": "video", "image_job_id": None,
         "video_job_id": video_job_id,
     }
@@ -221,6 +244,7 @@ async def render_script(req: RenderRequest, bg: BackgroundTasks):
         music=req.music,
         aspect_ratio=req.aspect_ratio,
         caption_style=req.caption_style,
+        transition=req.transition,
     )
 
     image_paths = _stashed_files(req.image_job_id, "upload_")
@@ -255,6 +279,10 @@ async def generate_image(
     music: bool = Form(True),
     aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
     caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    transition_type: TransitionType = Form(TransitionType.CROSSFADE),
+    transition_duration_sec: float = Form(0.5),
+    fade_in: bool = Form(True),
+    fade_out: bool = Form(True),
     images: list[UploadFile] = File(...),
 ):
     if not images:
@@ -281,6 +309,10 @@ async def generate_image(
         music=music,
         aspect_ratio=aspect_ratio,
         caption_style=caption_style,
+        transition=TransitionSettings(
+            type=transition_type, duration_sec=transition_duration_sec,
+            fade_in=fade_in, fade_out=fade_out,
+        ),
     )
     job = JobInfo(id=job_id, mode="image", status=JobStatus.QUEUED)
     JOBS[job_id] = job
@@ -300,6 +332,10 @@ async def generate_video(
     music: bool = Form(True),
     aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
     caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    transition_type: TransitionType = Form(TransitionType.CROSSFADE),
+    transition_duration_sec: float = Form(0.5),
+    fade_in: bool = Form(True),
+    fade_out: bool = Form(True),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode in one shot: upload footage, get the finished promo."""
@@ -327,6 +363,10 @@ async def generate_video(
         music=music,
         aspect_ratio=aspect_ratio,
         caption_style=caption_style,
+        transition=TransitionSettings(
+            type=transition_type, duration_sec=transition_duration_sec,
+            fade_in=fade_in, fade_out=fade_out,
+        ),
     )
     job = JobInfo(id=job_id, mode="video", status=JobStatus.QUEUED)
     JOBS[job_id] = job

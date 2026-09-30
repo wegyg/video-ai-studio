@@ -11,6 +11,8 @@ import os
 
 from app.config import Settings
 from app.models import (
+    TRANSITION_MAX_SEC,
+    TRANSITION_MIN_SEC,
     AspectRatio,
     CaptionStyle,
     ImageRequest,
@@ -19,6 +21,7 @@ from app.models import (
     Script,
     Tone,
     TopicRequest,
+    TransitionSettings,
 )
 from app.providers.registry import ProviderRegistry
 from app.render import Renderer, SceneClip
@@ -142,21 +145,51 @@ class Pipeline:
                 )
             )
 
-        # 3) Render each scene -------------------------------------------
+        # 3) Transition plan ---------------------------------------------
+        # One entry per scene boundary. A scene may override the project default.
+        # Each transition is clamped so it can never swallow a whole scene, and
+        # quantised to whole frames so offsets stay exact.
+        tset: TransitionSettings = getattr(req, "transition", None) or TransitionSettings()
+        fps = self.s.video_fps
+        plan: list[tuple[str | None, float]] = []
+        for i in range(n - 1):
+            kind = script.scenes[i].transition or tset.type
+            name = kind.xfade_name
+            dur = 0.0
+            if name:
+                dur = min(max(tset.duration_sec, TRANSITION_MIN_SEC), TRANSITION_MAX_SEC)
+                dur = min(dur, 0.4 * min(scene_clips[i].duration, scene_clips[i + 1].duration))
+                dur = round(dur * fps) / fps
+                if dur < 0.1:  # scene too short to transition into
+                    name, dur = None, 0.0
+            plan.append((name, dur))
+        # Extra footage each scene needs so the transition has something to eat.
+        pads = [plan[i][1] if i < len(plan) else 0.0 for i in range(n)]
+        edge_fade = round(tset.duration_sec * fps) / fps
+
+        # 4) Render each scene -------------------------------------------
         job.status = JobStatus.RENDERING
         rendered: list[str] = []
         for i, clip in enumerate(scene_clips):
             job.progress = 60 + int((i / max(n, 1)) * 25)
             job.message = f"Rendering scene {i + 1}/{n}"
             out = os.path.join(job_dir, f"clip_{i}.mp4")
-            await renderer.render_scene(clip, out)
+            await renderer.render_scene(clip, out, tail_pad=pads[i])
             rendered.append(out)
 
-        # 4) Concat + mux -------------------------------------------------
+        # 5) Concat + mux -------------------------------------------------
         job.progress = 88
         job.message = "Stitching video"
         silent_video = os.path.join(job_dir, "video_silent.mp4")
-        await renderer.concat_video(rendered, silent_video)
+        if any(name for name, _ in plan) or tset.fade_in or tset.fade_out:
+            await renderer.concat_with_transitions(
+                rendered, plan, silent_video,
+                fade_in=edge_fade if tset.fade_in else 0.0,
+                fade_out=edge_fade if tset.fade_out else 0.0,
+            )
+        else:
+            # all cuts and no edge fades -> the original stream-copy fast path
+            await renderer.concat_video(rendered, silent_video)
 
         # Narration is placed at each scene's real start time (measured from the
         # rendered clips, so frame quantisation can't drift) instead of being
@@ -166,13 +199,16 @@ class Pipeline:
 
         starts: list[float] = []
         acc = 0.0
-        for path in rendered:
+        for path, pad in zip(rendered, pads):
             starts.append(acc)
-            acc += await _probe_clip(path)
+            acc += await _probe_clip(path) - pad  # the pad is eaten by the transition
 
         merged_audio = os.path.join(job_dir, "narration.m4a")
+        video_len = await _probe_clip(silent_video)
         await renderer.build_narration(
-            list(zip(starts, [c.audio_path for c in scene_clips])), acc, merged_audio
+            list(zip(starts, [c.audio_path for c in scene_clips])),
+            video_len or acc,
+            merged_audio,
         )
 
         job.progress = 95
@@ -186,7 +222,11 @@ class Pipeline:
         music_out = os.path.join(job_dir, "music.m4a")
         music_on = getattr(req, "music", True) and self.s.music_enabled
         music = await get_music(req.tone, total, music_out, enabled=music_on)
-        await renderer.mux(silent_video, merged_audio, final, music_path=music)
+        await renderer.mux(
+            silent_video, merged_audio, final, music_path=music,
+            fade_in=edge_fade if tset.fade_in else 0.0,
+            fade_out=edge_fade if tset.fade_out else 0.0,
+        )
 
         job.status = JobStatus.DONE
         job.progress = 100

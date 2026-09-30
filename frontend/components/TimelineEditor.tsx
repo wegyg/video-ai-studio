@@ -1,13 +1,19 @@
 "use client";
 
-import { Scene, Script } from "@/lib/api";
+import { Scene, Script, TRANSITIONS, TransitionType } from "@/lib/api";
 
 interface Props {
   script: Script;
   onChange: (script: Script) => void;
+  /** Project-wide transition, shown as the "default" option on each boundary. */
+  defaultTransition?: TransitionType;
 }
 
-export default function TimelineEditor({ script, onChange }: Props) {
+export default function TimelineEditor({
+  script,
+  onChange,
+  defaultTransition = "crossfade",
+}: Props) {
   const scenes = script.scenes;
 
   function update(i: number, patch: Partial<Scene>) {
@@ -56,10 +62,8 @@ export default function TimelineEditor({ script, onChange }: Props) {
 
       <div className="space-y-3">
         {scenes.map((s, i) => (
-          <div
-            key={i}
-            className="rounded-xl border border-white/10 bg-black/20 p-3"
-          >
+          <div key={i}>
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-2 text-xs font-medium text-white/50">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-brand/30 text-white">
@@ -130,10 +134,37 @@ export default function TimelineEditor({ script, onChange }: Props) {
               </div>
             </div>
           </div>
+
+          {/* transition chip between this scene and the next */}
+          {i < scenes.length - 1 && (
+            <div className="flex items-center gap-2 py-1.5 pl-9">
+              <span className="text-white/25">↓</span>
+              <select
+                aria-label={`Transition from scene ${i + 1} to scene ${i + 2}`}
+                value={s.transition ?? ""}
+                onChange={(e) =>
+                  update(i, { transition: (e.target.value || null) as TransitionType | null })
+                }
+                className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs text-white/70 outline-none focus:border-brand"
+                title="How this scene gives way to the next"
+              >
+                <option value="" className="bg-[#161226]">
+                  ✨ Default ({TRANSITIONS.find((t) => t.value === defaultTransition)?.label ?? defaultTransition})
+                </option>
+                {TRANSITIONS.map((t) => (
+                  <option key={t.value} value={t.value} className="bg-[#161226]">
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          </div>
         ))}
       </div>
       <p className="text-xs text-white/40">
-        💡 Scene length auto-extends to fit the narration when rendering.
+        💡 Scene length auto-extends to fit the narration when rendering. Transitions overlap the
+        scenes without shifting the voice or captions.
       </p>
     </div>
   );

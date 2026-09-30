@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   AspectRatio,
   CaptionStyle,
+  TRANSITIONS,
+  TransitionSettings,
+  TransitionType,
   generateFromImages,
   generateFromTopic,
   getJob,
@@ -47,6 +50,9 @@ export default function Home() {
   const [music, setMusic] = useState(true);
   const [ratio, setRatio] = useState<AspectRatio>("9:16");
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("pop");
+  const [transition, setTransition] = useState<TransitionType>("crossfade");
+  const [transitionSec, setTransitionSec] = useState(0.5);
+  const [edgeFade, setEdgeFade] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
   const [videos, setVideos] = useState<File[]>([]);
 
@@ -92,10 +98,20 @@ export default function Home() {
       music,
       aspect_ratio: ratio,
       caption_style: captionStyle,
+      transition: transitionSettings(),
     };
   }
 
   // Build a multipart form for image/video modes. `field` is "images"|"videos".
+  function transitionSettings(): TransitionSettings {
+    return {
+      type: transition,
+      duration_sec: transitionSec,
+      fade_in: edgeFade,
+      fade_out: edgeFade,
+    };
+  }
+
   function buildUploadForm(field: "images" | "videos", uploads: File[]): FormData | null {
     if (uploads.length === 0) {
       alert(field === "images" ? "Please upload at least one image." : "Please upload at least one video clip.");
@@ -111,6 +127,10 @@ export default function Home() {
     fd.append("music", String(music));
     fd.append("aspect_ratio", ratio);
     fd.append("caption_style", captionStyle);
+    fd.append("transition_type", transition);
+    fd.append("transition_duration_sec", String(transitionSec));
+    fd.append("fade_in", String(edgeFade));
+    fd.append("fade_out", String(edgeFade));
     uploads.forEach((f) => fd.append(field, f));
     return fd;
   }
@@ -175,7 +195,7 @@ export default function Home() {
         d = await scriptFromVideos(fd);
       }
       // carry the UI ratio/caption choices into the draft for rendering
-      d = { ...d, aspect_ratio: ratio, caption_style: captionStyle };
+      d = { ...d, aspect_ratio: ratio, caption_style: captionStyle, transition: transitionSettings() };
       setDraft(d);
     } catch (e) {
       alert((e as Error).message);
@@ -361,6 +381,53 @@ export default function Home() {
               </Field>
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Scene transition">
+                <select
+                  value={transition}
+                  onChange={(e) => setTransition(e.target.value as TransitionType)}
+                  className="input"
+                >
+                  {TRANSITIONS.map((t) => (
+                    <option key={t.value} value={t.value} className="bg-[#161226]">
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={`Transition length: ${transitionSec.toFixed(1)}s`}>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={1.5}
+                  step={0.1}
+                  value={transitionSec}
+                  disabled={transition === "cut"}
+                  onChange={(e) => setTransitionSec(Number(e.target.value))}
+                  className="w-full accent-brand disabled:opacity-40"
+                />
+              </Field>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setEdgeFade((v) => !v)}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm"
+            >
+              <span className="font-medium text-white/80">🌗 Fade in / out (start &amp; end)</span>
+              <span
+                className={`relative h-6 w-11 rounded-full transition ${
+                  edgeFade ? "bg-brand" : "bg-white/20"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
+                    edgeFade ? "left-[22px]" : "left-0.5"
+                  }`}
+                />
+              </span>
+            </button>
+
             <Field label={`Duration: ${duration}s`}>
               <input
                 type="range"
@@ -415,7 +482,11 @@ export default function Home() {
         {/* ---- Right: timeline editor OR preview / progress ---- */}
         {draft && !done ? (
           <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-            <TimelineEditor script={draft.script} onChange={updateScript} />
+            <TimelineEditor
+              script={draft.script}
+              onChange={updateScript}
+              defaultTransition={draft.transition?.type ?? transition}
+            />
             <div className="mt-5 space-y-3">
               {job && <JobProgress job={job} />}
               <button

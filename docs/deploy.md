@@ -1,5 +1,10 @@
 # 배포 (Vercel + Render)
 
+> **현재 운영 방식은 이 문서가 아닙니다.** 지금은 Windows PC에서 실행하고 Cloudflare
+> 터널로 공유합니다 — [docs/windows-share.md](windows-share.md) 를 보세요. 이 문서와
+> `render.yaml`, `backend/Dockerfile`, `frontend/vercel.json` 은 나중에 유료 서버로
+> 옮길 때 쓰려고 남겨둔 것입니다.
+
 | 구성 | 서비스 | 플랜 |
 |---|---|---|
 | 화면 (Next.js) | Vercel | Hobby (무료) |

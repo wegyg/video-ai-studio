@@ -12,6 +12,8 @@ from fastapi.responses import FileResponse
 
 from app.config import get_settings
 from app.models import (
+    AspectRatio,
+    CaptionStyle,
     ImageRequest,
     JobInfo,
     JobStatus,
@@ -109,6 +111,8 @@ async def script_image(
     language: str = Form("en"),
     voice: str = Form("default"),
     music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
     images: list[UploadFile] = File(...),
 ):
     """Generate an editable script draft from product images. Uploaded images
@@ -132,6 +136,8 @@ async def script_image(
         language=language,
         voice=voice,
         music=music,
+        aspect_ratio=aspect_ratio,
+        caption_style=caption_style,
     )
     script = await pipeline.generate_script(req)
     return {
@@ -140,6 +146,8 @@ async def script_image(
         "language": language,
         "voice": voice,
         "music": music,
+        "aspect_ratio": aspect_ratio,
+        "caption_style": caption_style,
         "mode": "image",
         "image_job_id": image_job_id,
     }
@@ -154,6 +162,8 @@ async def script_video(
     language: str = Form("en"),
     voice: str = Form("default"),
     music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode: upload your OWN footage, get an editable script draft.
@@ -173,11 +183,13 @@ async def script_video(
         topic=topic,
         key_points=[p.strip() for p in key_points.split("\n") if p.strip()],
         tone=tone, duration_sec=duration_sec, language=language, voice=voice, music=music,
+        aspect_ratio=aspect_ratio, caption_style=caption_style,
     )
     script = await pipeline.generate_script(req)
     return {
         "script": script, "tone": tone, "language": language, "voice": voice,
-        "music": music, "mode": "video", "image_job_id": None,
+        "music": music, "aspect_ratio": aspect_ratio, "caption_style": caption_style,
+        "mode": "video", "image_job_id": None,
         "video_job_id": video_job_id,
     }
 
@@ -241,6 +253,8 @@ async def generate_image(
     language: str = Form("en"),
     voice: str = Form("default"),
     music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
     images: list[UploadFile] = File(...),
 ):
     if not images:
@@ -265,10 +279,58 @@ async def generate_image(
         language=language,
         voice=voice,
         music=music,
+        aspect_ratio=aspect_ratio,
+        caption_style=caption_style,
     )
     job = JobInfo(id=job_id, mode="image", status=JobStatus.QUEUED)
     JOBS[job_id] = job
     bg.add_task(_run_job, job_id, req, saved)
+    return job
+
+
+@app.post("/api/generate/video", response_model=JobInfo)
+async def generate_video(
+    bg: BackgroundTasks,
+    topic: str = Form(...),
+    key_points: str = Form(""),
+    tone: Tone = Form(Tone.ENERGETIC),
+    duration_sec: int = Form(20),
+    language: str = Form("en"),
+    voice: str = Form("default"),
+    music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    videos: list[UploadFile] = File(...),
+):
+    """Movie-CF mode in one shot: upload footage, get the finished promo."""
+    if not videos:
+        raise HTTPException(400, "At least one video clip is required")
+
+    job_id = uuid.uuid4().hex[:12]
+    jdir = _job_dir(job_id)
+    os.makedirs(jdir, exist_ok=True)
+
+    saved: list[str] = []
+    for idx, up in enumerate(videos):
+        dest = os.path.join(jdir, f"clip_{idx}{os.path.splitext(up.filename or '')[1] or '.mp4'}")
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(up.file, f)
+        saved.append(dest)
+
+    req = TopicRequest(
+        topic=topic,
+        key_points=[p.strip() for p in key_points.split("\n") if p.strip()],
+        tone=tone,
+        duration_sec=duration_sec,
+        language=language,
+        voice=voice,
+        music=music,
+        aspect_ratio=aspect_ratio,
+        caption_style=caption_style,
+    )
+    job = JobInfo(id=job_id, mode="video", status=JobStatus.QUEUED)
+    JOBS[job_id] = job
+    bg.add_task(_run_job, job_id, req, None, None, saved)
     return job
 
 

@@ -14,7 +14,7 @@ export interface JobInfo {
   status: JobStatus;
   progress: number;
   message: string;
-  mode: "topic" | "image";
+  mode: "topic" | "image" | "video";
   providers: Record<string, string>;
   video_url: string | null;
   error: string | null;
@@ -82,6 +82,12 @@ export async function generateFromTopic(payload: TopicPayload): Promise<JobInfo>
     body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(`Topic generation failed: ${r.status}`);
+  return r.json();
+}
+
+export async function generateFromVideos(form: FormData): Promise<JobInfo> {
+  const r = await fetch("/api/generate/video", { method: "POST", body: form });
+  if (!r.ok) throw new Error(`Video generation failed: ${r.status}`);
   return r.json();
 }
 

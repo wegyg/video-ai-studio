@@ -14,6 +14,7 @@ import {
   scriptFromImages,
   scriptFromTopic,
   scriptFromVideos,
+  generateFromVideos,
   Tone,
 } from "@/lib/api";
 import ProviderBadge from "@/components/ProviderBadge";
@@ -108,6 +109,8 @@ export default function Home() {
     fd.append("language", language);
     fd.append("voice", "default");
     fd.append("music", String(music));
+    fd.append("aspect_ratio", ratio);
+    fd.append("caption_style", captionStyle);
     uploads.forEach((f) => fd.append(field, f));
     return fd;
   }
@@ -123,15 +126,20 @@ export default function Home() {
       let created: JobInfo;
       if (mode === "topic") {
         created = await generateFromTopic(topicPayload());
-      } else {
+      } else if (mode === "image") {
         const fd = buildUploadForm("images", files);
         if (!fd) {
           setBusy(false);
           return;
         }
-        fd.append("aspect_ratio", ratio);
-        fd.append("caption_style", captionStyle);
         created = await generateFromImages(fd);
+      } else {
+        const fd = buildUploadForm("videos", videos);
+        if (!fd) {
+          setBusy(false);
+          return;
+        }
+        created = await generateFromVideos(fd);
       }
       setJob(created);
     } catch (e) {
@@ -320,6 +328,35 @@ export default function Home() {
                   <option value="ko" className="bg-[#161226]">한국어</option>
                   <option value="es" className="bg-[#161226]">Español</option>
                   <option value="ja" className="bg-[#161226]">日本語</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Format">
+                <select
+                  value={ratio}
+                  onChange={(e) => setRatio(e.target.value as AspectRatio)}
+                  className="input"
+                >
+                  {RATIOS.map((r) => (
+                    <option key={r.value} value={r.value} className="bg-[#161226]">
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Captions">
+                <select
+                  value={captionStyle}
+                  onChange={(e) => setCaptionStyle(e.target.value as CaptionStyle)}
+                  className="input"
+                >
+                  {CAPTION_STYLES.map((c) => (
+                    <option key={c.value} value={c.value} className="bg-[#161226]">
+                      {c.label}
+                    </option>
+                  ))}
                 </select>
               </Field>
             </div>

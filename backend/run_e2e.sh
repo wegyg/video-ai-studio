@@ -2,6 +2,8 @@
 # Start the server, run the HTTP E2E tests, then shut the server down.
 set -e
 cd "$(dirname "$0")"
+bash ../scripts/setup_python.sh
+bash ../scripts/setup_ffmpeg.sh
 bash run_server.sh > /projects/sandbox/backend.log 2>&1 &
 SRV=$!
 # wait for readiness

@@ -13,3 +13,4 @@ frontend/out/
 # Logs & OS
 *.log
 .DS_Store
+frontend/tsconfig.tsbuildinfo

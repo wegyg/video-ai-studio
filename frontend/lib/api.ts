@@ -14,7 +14,7 @@ export interface JobInfo {
   status: JobStatus;
   progress: number;
   message: string;
-  mode: "topic" | "image";
+  mode: "topic" | "image" | "video";
   providers: Record<string, string>;
   video_url: string | null;
   error: string | null;
@@ -27,6 +27,9 @@ export interface ProvidersInfo {
 
 export type Tone = "energetic" | "professional" | "friendly" | "luxury" | "playful";
 
+export type AspectRatio = "9:16" | "1:1" | "16:9";
+export type CaptionStyle = "static" | "pop" | "karaoke";
+
 export interface TopicPayload {
   topic: string;
   key_points: string[];
@@ -35,6 +38,8 @@ export interface TopicPayload {
   language: string;
   voice: string;
   music: boolean;
+  aspect_ratio: AspectRatio;
+  caption_style: CaptionStyle;
 }
 
 export interface Scene {
@@ -57,8 +62,11 @@ export interface ScriptDraft {
   language: string;
   voice: string;
   music: boolean;
-  mode: "topic" | "image";
+  aspect_ratio: AspectRatio;
+  caption_style: CaptionStyle;
+  mode: "topic" | "image" | "video";
   image_job_id: string | null;
+  video_job_id: string | null;
 }
 
 export async function getProviders(): Promise<ProvidersInfo> {
@@ -74,6 +82,12 @@ export async function generateFromTopic(payload: TopicPayload): Promise<JobInfo>
     body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(`Topic generation failed: ${r.status}`);
+  return r.json();
+}
+
+export async function generateFromVideos(form: FormData): Promise<JobInfo> {
+  const r = await fetch("/api/generate/video", { method: "POST", body: form });
+  if (!r.ok) throw new Error(`Video generation failed: ${r.status}`);
   return r.json();
 }
 
@@ -106,6 +120,12 @@ export async function scriptFromImages(form: FormData): Promise<ScriptDraft> {
   return r.json();
 }
 
+export async function scriptFromVideos(form: FormData): Promise<ScriptDraft> {
+  const r = await fetch("/api/script/video", { method: "POST", body: form });
+  if (!r.ok) throw new Error(`Script generation failed: ${r.status}`);
+  return r.json();
+}
+
 export async function renderScript(draft: ScriptDraft): Promise<JobInfo> {
   const r = await fetch("/api/render", {
     method: "POST",
@@ -116,7 +136,10 @@ export async function renderScript(draft: ScriptDraft): Promise<JobInfo> {
       language: draft.language,
       voice: draft.voice,
       music: draft.music,
+      aspect_ratio: draft.aspect_ratio,
+      caption_style: draft.caption_style,
       image_job_id: draft.image_job_id,
+      video_job_id: draft.video_job_id,
     }),
   });
   if (!r.ok) throw new Error(`Render failed: ${r.status}`);

@@ -56,16 +56,20 @@ it in `registry.py`. Nothing else changes.
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.11+, Node.js 18+
-- **FFmpeg** on your PATH (`ffmpeg -version` should work)
+- Python 3.11+ (or [uv](https://docs.astral.sh/uv/)), Node.js 18+
+- FFmpeg — installed for you by `scripts/setup_ffmpeg.sh` (no system packages needed)
+
+### 0) One-time environment setup
+```bash
+bash scripts/setup_ffmpeg.sh   # static FFmpeg with the filters we need, on PATH
+bash scripts/setup_python.sh   # backend/.venv + dependencies
+```
+Both scripts are idempotent — run them as often as you like. `run_server.sh` and
+`run_e2e.sh` call them on start, so the usual flow needs no manual step.
 
 ### 1) Backend
 ```bash
 cd backend
-uv venv --python 3.11 .venv           # or: python3.11 -m venv .venv
-uv pip install --python .venv/bin/python \
-  fastapi "uvicorn[standard]" pydantic pydantic-settings \
-  python-multipart httpx pillow gTTS
 cp .env.example .env                  # optional: add API keys
 bash run_server.sh                    # serves on http://127.0.0.1:8000
 ```

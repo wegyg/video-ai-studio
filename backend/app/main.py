@@ -12,6 +12,8 @@ from fastapi.responses import FileResponse
 
 from app.config import get_settings
 from app.models import (
+    AspectRatio,
+    CaptionStyle,
     ImageRequest,
     JobInfo,
     JobStatus,
@@ -45,11 +47,12 @@ def _job_dir(job_id: str) -> str:
     return os.path.join(OUTPUT_ROOT, job_id)
 
 
-async def _run_job(job_id: str, req, image_paths=None, script: Script | None = None):
+async def _run_job(job_id, req, image_paths=None, script=None, video_paths=None):
     job = JOBS[job_id]
     try:
         final = await pipeline.run(
-            job, req, _job_dir(job_id), image_paths=image_paths, script=script
+            job, req, _job_dir(job_id),
+            image_paths=image_paths, script=script, video_paths=video_paths,
         )
         job.video_url = f"/api/jobs/{job_id}/video"
         _ = final
@@ -108,6 +111,8 @@ async def script_image(
     language: str = Form("en"),
     voice: str = Form("default"),
     music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
     images: list[UploadFile] = File(...),
 ):
     """Generate an editable script draft from product images. Uploaded images
@@ -131,6 +136,8 @@ async def script_image(
         language=language,
         voice=voice,
         music=music,
+        aspect_ratio=aspect_ratio,
+        caption_style=caption_style,
     )
     script = await pipeline.generate_script(req)
     return {
@@ -139,9 +146,63 @@ async def script_image(
         "language": language,
         "voice": voice,
         "music": music,
+        "aspect_ratio": aspect_ratio,
+        "caption_style": caption_style,
         "mode": "image",
         "image_job_id": image_job_id,
     }
+
+
+@app.post("/api/script/video")
+async def script_video(
+    topic: str = Form(...),
+    key_points: str = Form(""),
+    tone: Tone = Form(Tone.ENERGETIC),
+    duration_sec: int = Form(20),
+    language: str = Form("en"),
+    voice: str = Form("default"),
+    music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    videos: list[UploadFile] = File(...),
+):
+    """Movie-CF mode: upload your OWN footage, get an editable script draft.
+    Uploaded clips are stashed under a job id for the later /api/render call."""
+    if not videos:
+        raise HTTPException(400, "At least one video clip is required")
+
+    video_job_id = uuid.uuid4().hex[:12]
+    jdir = _job_dir(video_job_id)
+    os.makedirs(jdir, exist_ok=True)
+    for idx, up in enumerate(videos):
+        ext = os.path.splitext(up.filename or "")[1] or ".mp4"
+        with open(os.path.join(jdir, f"clip_{idx}{ext}"), "wb") as f:
+            shutil.copyfileobj(up.file, f)
+
+    req = TopicRequest(
+        topic=topic,
+        key_points=[p.strip() for p in key_points.split("\n") if p.strip()],
+        tone=tone, duration_sec=duration_sec, language=language, voice=voice, music=music,
+        aspect_ratio=aspect_ratio, caption_style=caption_style,
+    )
+    script = await pipeline.generate_script(req)
+    return {
+        "script": script, "tone": tone, "language": language, "voice": voice,
+        "music": music, "aspect_ratio": aspect_ratio, "caption_style": caption_style,
+        "mode": "video", "image_job_id": None,
+        "video_job_id": video_job_id,
+    }
+
+
+def _stashed_files(job_id: str | None, prefix: str) -> list[str] | None:
+    if not job_id:
+        return None
+    d = _job_dir(job_id)
+    if not os.path.isdir(d):
+        return None
+    return sorted(
+        os.path.join(d, f) for f in os.listdir(d) if f.startswith(prefix)
+    ) or None
 
 
 @app.post("/api/render", response_model=JobInfo)
@@ -150,8 +211,7 @@ async def render_script(req: RenderRequest, bg: BackgroundTasks):
     if not req.script.scenes:
         raise HTTPException(400, "Script must have at least one scene")
 
-    mode = "image" if req.image_job_id else "topic"
-    # Build a minimal request object to carry tone/lang/voice/music through.
+    mode = "video" if req.video_job_id else ("image" if req.image_job_id else "topic")
     gen_req = TopicRequest(
         topic=req.script.title or "Promo",
         tone=req.tone,
@@ -159,23 +219,17 @@ async def render_script(req: RenderRequest, bg: BackgroundTasks):
         language=req.language,
         voice=req.voice,
         music=req.music,
+        aspect_ratio=req.aspect_ratio,
+        caption_style=req.caption_style,
     )
 
-    # Reuse images uploaded during image-mode script generation, if any.
-    image_paths = None
-    if req.image_job_id:
-        src_dir = _job_dir(req.image_job_id)
-        if os.path.isdir(src_dir):
-            image_paths = sorted(
-                os.path.join(src_dir, f)
-                for f in os.listdir(src_dir)
-                if f.startswith("upload_")
-            ) or None
+    image_paths = _stashed_files(req.image_job_id, "upload_")
+    video_paths = _stashed_files(req.video_job_id, "clip_")
 
     job_id = uuid.uuid4().hex[:12]
     job = JobInfo(id=job_id, mode=mode, status=JobStatus.QUEUED)
     JOBS[job_id] = job
-    bg.add_task(_run_job, job_id, gen_req, image_paths, req.script)
+    bg.add_task(_run_job, job_id, gen_req, image_paths, req.script, video_paths)
     return job
 
 
@@ -199,6 +253,8 @@ async def generate_image(
     language: str = Form("en"),
     voice: str = Form("default"),
     music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
     images: list[UploadFile] = File(...),
 ):
     if not images:
@@ -223,10 +279,58 @@ async def generate_image(
         language=language,
         voice=voice,
         music=music,
+        aspect_ratio=aspect_ratio,
+        caption_style=caption_style,
     )
     job = JobInfo(id=job_id, mode="image", status=JobStatus.QUEUED)
     JOBS[job_id] = job
     bg.add_task(_run_job, job_id, req, saved)
+    return job
+
+
+@app.post("/api/generate/video", response_model=JobInfo)
+async def generate_video(
+    bg: BackgroundTasks,
+    topic: str = Form(...),
+    key_points: str = Form(""),
+    tone: Tone = Form(Tone.ENERGETIC),
+    duration_sec: int = Form(20),
+    language: str = Form("en"),
+    voice: str = Form("default"),
+    music: bool = Form(True),
+    aspect_ratio: AspectRatio = Form(AspectRatio.VERTICAL),
+    caption_style: CaptionStyle = Form(CaptionStyle.POP),
+    videos: list[UploadFile] = File(...),
+):
+    """Movie-CF mode in one shot: upload footage, get the finished promo."""
+    if not videos:
+        raise HTTPException(400, "At least one video clip is required")
+
+    job_id = uuid.uuid4().hex[:12]
+    jdir = _job_dir(job_id)
+    os.makedirs(jdir, exist_ok=True)
+
+    saved: list[str] = []
+    for idx, up in enumerate(videos):
+        dest = os.path.join(jdir, f"clip_{idx}{os.path.splitext(up.filename or '')[1] or '.mp4'}")
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(up.file, f)
+        saved.append(dest)
+
+    req = TopicRequest(
+        topic=topic,
+        key_points=[p.strip() for p in key_points.split("\n") if p.strip()],
+        tone=tone,
+        duration_sec=duration_sec,
+        language=language,
+        voice=voice,
+        music=music,
+        aspect_ratio=aspect_ratio,
+        caption_style=caption_style,
+    )
+    job = JobInfo(id=job_id, mode="video", status=JobStatus.QUEUED)
+    JOBS[job_id] = job
+    bg.add_task(_run_job, job_id, req, None, None, saved)
     return job
 
 

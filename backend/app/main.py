@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import uuid
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 
 from app.config import get_settings
 from app.models import (
@@ -22,6 +25,7 @@ from app.models import (
     ImageRequest,
     JobInfo,
     JobStatus,
+    Overlay,
     RenderRequest,
     Script,
     Tone,
@@ -50,6 +54,45 @@ pipeline = Pipeline(settings)
 
 def _job_dir(job_id: str) -> str:
     return os.path.join(OUTPUT_ROOT, job_id)
+
+
+LOGO_DIR = os.path.join(OUTPUT_ROOT, "logos")
+os.makedirs(LOGO_DIR, exist_ok=True)
+
+
+def _resolve_overlays(overlays: list[Overlay]) -> list[Overlay]:
+    """Turn `logo_id` into a real path, and refuse anything else.
+
+    `logo_path` is always rewritten from the id, so a crafted request cannot ask
+    the renderer to read a file outside the logo directory. Ids are the hex names
+    handed out by the upload endpoint, so anything with a separator or an odd
+    character in it is dropped rather than looked up.
+    """
+    for ov in overlays:
+        ov.logo_path = None
+        raw = (ov.logo_id or "").strip()
+        if not raw or not re.fullmatch(r"[0-9a-f]{8,40}", raw):
+            continue
+        candidate = os.path.join(LOGO_DIR, f"{raw}.png")
+        if os.path.isfile(candidate) and os.path.abspath(candidate).startswith(LOGO_DIR):
+            ov.logo_path = candidate
+    return overlays
+
+
+def _parse_overlays(raw: str | None) -> list[Overlay]:
+    """Overlays arrive as a JSON array on the multipart upload endpoints."""
+    if not raw or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"overlays must be a JSON array: {e}") from e
+    if not isinstance(data, list):
+        raise HTTPException(400, "overlays must be a JSON array")
+    try:
+        return _resolve_overlays([Overlay.model_validate(item) for item in data])
+    except ValidationError as e:
+        raise HTTPException(400, f"invalid overlay: {e}") from e
 
 
 async def _run_job(job_id, req, image_paths=None, script=None, video_paths=None):
@@ -128,6 +171,7 @@ async def script_image(
     fade_out: bool = Form(True),
     motion_type: MotionType = Form(MotionType.AUTO),
     motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
+    overlays: str | None = Form(None),
     images: list[UploadFile] = File(...),
 ):
     """Generate an editable script draft from product images. Uploaded images
@@ -158,6 +202,7 @@ async def script_image(
             fade_in=fade_in, fade_out=fade_out,
         ),
         motion=MotionSettings(type=motion_type, intensity=motion_intensity),
+        overlays=_parse_overlays(overlays),
     )
     script = await pipeline.generate_script(req)
     return {
@@ -192,6 +237,7 @@ async def script_video(
     fade_out: bool = Form(True),
     motion_type: MotionType = Form(MotionType.AUTO),
     motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
+    overlays: str | None = Form(None),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode: upload your OWN footage, get an editable script draft.
@@ -217,6 +263,7 @@ async def script_video(
             fade_in=fade_in, fade_out=fade_out,
         ),
         motion=MotionSettings(type=motion_type, intensity=motion_intensity),
+        overlays=_parse_overlays(overlays),
     )
     script = await pipeline.generate_script(req)
     return {
@@ -240,6 +287,30 @@ def _stashed_files(job_id: str | None, prefix: str) -> list[str] | None:
     ) or None
 
 
+@app.post("/api/assets/logo")
+async def upload_logo(logo: UploadFile = File(...)):
+    """Store a logo for use by a `logo` overlay and return its id.
+
+    Re-encoded through PIL rather than written straight to disk: that rejects
+    anything that is not really an image, and drops whatever else the uploaded
+    file may have carried.
+    """
+    from PIL import Image
+
+    logo_id = uuid.uuid4().hex[:16]
+    dest = os.path.join(LOGO_DIR, f"{logo_id}.png")
+    try:
+        img = Image.open(logo.file)
+        img.verify()          # structural check; consumes the stream
+        logo.file.seek(0)
+        img = Image.open(logo.file).convert("RGBA")
+        img.thumbnail((2000, 2000), Image.LANCZOS)
+        img.save(dest, "PNG")
+    except Exception as e:
+        raise HTTPException(400, f"Not a readable image: {e}") from e
+    return {"logo_id": logo_id, "width": img.width, "height": img.height}
+
+
 @app.post("/api/render", response_model=JobInfo)
 async def render_script(req: RenderRequest, bg: BackgroundTasks):
     """Render a (possibly edited) script draft into the final video."""
@@ -258,6 +329,7 @@ async def render_script(req: RenderRequest, bg: BackgroundTasks):
         caption_style=req.caption_style,
         transition=req.transition,
         motion=req.motion,
+        overlays=_resolve_overlays(req.overlays),
     )
 
     image_paths = _stashed_files(req.image_job_id, "upload_")
@@ -273,6 +345,7 @@ async def render_script(req: RenderRequest, bg: BackgroundTasks):
 # --- One-shot workflow (generate everything in one call) --------------------
 @app.post("/api/generate/topic", response_model=JobInfo)
 async def generate_topic(req: TopicRequest, bg: BackgroundTasks):
+    req.overlays = _resolve_overlays(req.overlays)
     job_id = uuid.uuid4().hex[:12]
     job = JobInfo(id=job_id, mode="topic", status=JobStatus.QUEUED)
     JOBS[job_id] = job
@@ -298,6 +371,7 @@ async def generate_image(
     fade_out: bool = Form(True),
     motion_type: MotionType = Form(MotionType.AUTO),
     motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
+    overlays: str | None = Form(None),
     images: list[UploadFile] = File(...),
 ):
     if not images:
@@ -329,6 +403,7 @@ async def generate_image(
             fade_in=fade_in, fade_out=fade_out,
         ),
         motion=MotionSettings(type=motion_type, intensity=motion_intensity),
+        overlays=_parse_overlays(overlays),
     )
     job = JobInfo(id=job_id, mode="image", status=JobStatus.QUEUED)
     JOBS[job_id] = job
@@ -354,6 +429,7 @@ async def generate_video(
     fade_out: bool = Form(True),
     motion_type: MotionType = Form(MotionType.AUTO),
     motion_intensity: MotionIntensity = Form(MotionIntensity.MEDIUM),
+    overlays: str | None = Form(None),
     videos: list[UploadFile] = File(...),
 ):
     """Movie-CF mode in one shot: upload footage, get the finished promo."""
@@ -386,6 +462,7 @@ async def generate_video(
             fade_in=fade_in, fade_out=fade_out,
         ),
         motion=MotionSettings(type=motion_type, intensity=motion_intensity),
+        overlays=_parse_overlays(overlays),
     )
     job = JobInfo(id=job_id, mode="video", status=JobStatus.QUEUED)
     JOBS[job_id] = job

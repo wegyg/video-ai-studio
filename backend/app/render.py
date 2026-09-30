@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -49,6 +49,24 @@ VIDEO_MAX_INTENSITY = "weak"
 
 
 @dataclass
+class GraphicCue:
+    """A pre-drawn graphic PNG and when it shows, in THIS scene's own time.
+
+    An overlay can span several scenes, and each scene is a separate render, so
+    the cue also records whether this is the scene where the graphic arrives or
+    leaves. Without that, a graphic crossing a scene boundary would fade in again
+    on every clip it touches instead of only at its start.
+    """
+
+    png_path: str
+    start: float
+    end: float
+    fade: float = 0.0
+    fade_in: bool = True
+    fade_out: bool = True
+
+
+@dataclass
 class SceneClip:
     image_path: str  # still image OR source video clip depending on `kind`
     caption: str
@@ -60,6 +78,7 @@ class SceneClip:
     caption_style: str = "pop"  # "static" | "pop" | "karaoke"
     motion: str = "zoom_in"  # see models.MotionType (already resolved: never "auto")
     motion_intensity: str = "medium"
+    graphics: list[GraphicCue] = field(default_factory=list)
 
 
 def _escape_drawtext(text: str) -> str:
@@ -261,14 +280,21 @@ class Renderer:
             paths.append(p)
         return paths
 
-    def _overlay_filter(self, n_overlays: int, d: float, base_label: str = "bg") -> str:
+    def _overlay_filter(self, n_overlays: int, d: float, base_label: str = "bg",
+                        out_label: str = "v", final: bool = True) -> str:
         """Chain N timed overlays across duration d. Overlay PNGs are ffmpeg
         inputs #1..#N (input #0 is the background), so alias each to ovK first.
-        Reveal step i is shown in its time slice; the last step persists."""
+        Reveal step i is shown in its time slice; the last step persists.
+
+        `final` converts to the output pixel format. Graphics overlays turn it off
+        so they can still composite in RGBA before that conversion happens.
+        """
+        tail = ",format=yuv420p" if final else ""
         # alias overlay inputs [1:v]..[N:v] -> [ov0]..[ov(N-1)]
         aliases = ";".join(f"[{i + 1}:v]null[ov{i}]" for i in range(n_overlays))
         if n_overlays == 1:
-            return f"{aliases};[{base_label}][ov0]overlay=0:0:format=auto,format=yuv420p[v]"
+            return (f"{aliases};[{base_label}][ov0]overlay=0:0:format=auto"
+                    f"{tail}[{out_label}]")
         slice_d = d / n_overlays
         parts = [aliases]
         prev = base_label
@@ -279,8 +305,53 @@ class Renderer:
             out = f"v{i}" if i < n_overlays - 1 else "vtmp"
             parts.append(f"[{prev}][ov{i}]overlay=0:0:enable='{cond}':format=auto[{out}]")
             prev = out
-        parts.append("[vtmp]format=yuv420p[v]")
+        parts.append(f"[vtmp]null{tail}[{out_label}]" if not final
+                     else f"[vtmp]format=yuv420p[{out_label}]")
         return ";".join(parts)
+
+    def _graphics_filter(self, cues: list[GraphicCue], first_input: int,
+                         base_label: str, out_label: str = "v") -> str:
+        """Lay pre-drawn graphics over `base_label`, each in its own time window.
+
+        Graphic PNGs come in as looped inputs #first_input.., so they are real
+        streams and `fade` can ramp their alpha over time; a single-frame input
+        would have no timeline to fade along. `enable` decides when the graphic is
+        composited at all, and the fades soften its arrival and exit.
+        """
+        parts: list[str] = []
+        for k, cue in enumerate(cues):
+            idx = first_input + k
+            chain = ["format=rgba"]
+            if cue.fade > 0 and cue.fade_in:
+                chain.append(f"fade=t=in:st={cue.start:.3f}:d={cue.fade:.3f}:alpha=1")
+            if cue.fade > 0 and cue.fade_out:
+                chain.append(
+                    f"fade=t=out:st={max(cue.start, cue.end - cue.fade):.3f}"
+                    f":d={cue.fade:.3f}:alpha=1"
+                )
+            parts.append(f"[{idx}:v]{','.join(chain)}[g{k}]")
+        prev = base_label
+        for k, cue in enumerate(cues):
+            out = f"gv{k}"
+            parts.append(
+                f"[{prev}][g{k}]overlay=0:0:"
+                f"enable='between(t,{cue.start:.3f},{cue.end:.3f})':format=auto[{out}]"
+            )
+            prev = out
+        parts.append(f"[{prev}]format=yuv420p[{out_label}]")
+        return ";".join(parts)
+
+    def _scene_filter(self, clip: SceneClip, total: float, frames: int, d: float) -> str:
+        """Motion -> captions -> graphics, ending on [v]."""
+        n_caps = len(self._reveal_steps(clip))
+        motion = self._motion_chain(clip, total, frames)
+        if not clip.graphics:
+            return motion + ";" + self._overlay_filter(n_caps, d, "bg")
+        # captions stop short of the pixel-format conversion so the graphics can
+        # still be composited on top of them
+        caps = self._overlay_filter(n_caps, d, "bg", out_label="vcap", final=False)
+        first = 1 + n_caps  # input 0 is the background, then one per caption step
+        return ";".join([motion, caps, self._graphics_filter(clip.graphics, first, "vcap")])
 
     async def _render_still_scene(self, clip: SceneClip, out_path: str, d: float, pad: float = 0.0) -> str:
         total = d + pad
@@ -289,7 +360,10 @@ class Renderer:
         inputs = ["-loop", "1", "-i", clip.image_path]
         for ov in overlays:
             inputs += ["-i", ov]
-        fc = self._motion_chain(clip, total, frames) + ";" + self._overlay_filter(len(overlays), d, "bg")
+        for cue in clip.graphics:
+            # looped so the graphic is a stream with a timeline to fade along
+            inputs += ["-loop", "1", "-i", cue.png_path]
+        fc = self._scene_filter(clip, total, frames, d)
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc, "-map", "[v]",
@@ -304,11 +378,9 @@ class Renderer:
         inputs = ["-stream_loop", "-1", "-i", clip.image_path]
         for ov in overlays:
             inputs += ["-i", ov]
-        fc = (
-            self._motion_chain(clip, d + pad, int((d + pad) * self.fps))
-            + ";"
-            + self._overlay_filter(len(overlays), d, "bg")
-        )
+        for cue in clip.graphics:
+            inputs += ["-loop", "1", "-i", cue.png_path]
+        fc = self._scene_filter(clip, d + pad, int((d + pad) * self.fps), d)
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", fc, "-map", "[v]",

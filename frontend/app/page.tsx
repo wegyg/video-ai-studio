@@ -6,6 +6,7 @@ import {
   CaptionStyle,
   MOTIONS,
   MOTION_INTENSITIES,
+  Overlay,
   MotionIntensity,
   MotionSettings,
   MotionType,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/api";
 import ProviderBadge from "@/components/ProviderBadge";
 import JobProgress from "@/components/JobProgress";
+import OverlayPanel from "@/components/OverlayPanel";
 import TimelineEditor from "@/components/TimelineEditor";
 
 type Mode = "topic" | "image" | "video";
@@ -60,6 +62,7 @@ export default function Home() {
   const [motion, setMotion] = useState<MotionType>("auto");
   const [motionIntensity, setMotionIntensity] = useState<MotionIntensity>("medium");
   const [edgeFade, setEdgeFade] = useState(true);
+  const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [videos, setVideos] = useState<File[]>([]);
 
@@ -107,6 +110,7 @@ export default function Home() {
       caption_style: captionStyle,
       transition: transitionSettings(),
       motion: motionSettings(),
+      overlays,
     };
   }
 
@@ -143,6 +147,7 @@ export default function Home() {
     fd.append("transition_duration_sec", String(transitionSec));
     fd.append("motion_type", motion);
     fd.append("motion_intensity", motionIntensity);
+    if (overlays.length) fd.append("overlays", JSON.stringify(overlays));
     fd.append("fade_in", String(edgeFade));
     fd.append("fade_out", String(edgeFade));
     uploads.forEach((f) => fd.append(field, f));
@@ -215,6 +220,7 @@ export default function Home() {
         caption_style: captionStyle,
         transition: transitionSettings(),
         motion: motionSettings(),
+        overlays,
       };
       setDraft(d);
     } catch (e) {
@@ -230,7 +236,17 @@ export default function Home() {
     setBusy(true);
     setJob(null);
     try {
-      const created = await renderScript(draft);
+      // The form controls stay live while the draft is on screen, so read them
+      // again here instead of using the values captured when the draft was made
+      // — otherwise a graphic added (or a ratio changed) during review is lost.
+      const created = await renderScript({
+        ...draft,
+        aspect_ratio: ratio,
+        caption_style: captionStyle,
+        transition: transitionSettings(),
+        motion: motionSettings(),
+        overlays,
+      });
       setJob(created);
     } catch (e) {
       alert((e as Error).message);
@@ -507,6 +523,14 @@ export default function Home() {
                 />
               </span>
             </button>
+
+            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+              <OverlayPanel
+                overlays={overlays}
+                onChange={setOverlays}
+                sceneCount={draft?.script.scenes.length ?? 0}
+              />
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <button

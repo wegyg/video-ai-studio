@@ -79,6 +79,118 @@ export const MOTION_INTENSITIES: { value: MotionIntensity; label: string }[] = [
   { value: "strong", label: "Strong" },
 ];
 
+export type OverlayKind = "text" | "shape" | "logo" | "sticker";
+export type ShapeKind = "label_box" | "arrow" | "circle" | "highlight_bar";
+export type StickerPreset =
+  | "new"
+  | "sale"
+  | "hot"
+  | "best"
+  | "free"
+  | "sold_out"
+  | "check"
+  | "star"
+  | "arrow_down"
+  | "percent";
+
+/** A graphic laid over the video. Position/size are percentages of the frame, so
+ *  the same overlay lands in the same visual spot in every aspect ratio. */
+export interface Overlay {
+  kind: OverlayKind;
+  x_pct: number;
+  y_pct: number;
+  scene_index?: number | null;
+  start_sec?: number | null;
+  end_sec?: number | null;
+  fade_sec: number;
+  color: string;
+  opacity: number;
+  text: string;
+  size_pct: number;
+  background_box: boolean;
+  box_color: string;
+  shape: ShapeKind;
+  width_pct: number;
+  height_pct: number;
+  thickness_pct: number;
+  logo_id?: string | null;
+  sticker: StickerPreset;
+  rotation_deg: number;
+}
+
+export const OVERLAY_KINDS: { value: OverlayKind; label: string }[] = [
+  { value: "text", label: "Text" },
+  { value: "shape", label: "Shape" },
+  { value: "sticker", label: "Sticker" },
+  { value: "logo", label: "Logo / image" },
+];
+
+export const SHAPES: { value: ShapeKind; label: string }[] = [
+  { value: "label_box", label: "Label box" },
+  { value: "arrow", label: "Arrow" },
+  { value: "circle", label: "Circle highlight" },
+  { value: "highlight_bar", label: "Highlight bar" },
+];
+
+export const STICKERS: { value: StickerPreset; label: string }[] = [
+  { value: "new", label: "NEW" },
+  { value: "sale", label: "SALE" },
+  { value: "hot", label: "HOT" },
+  { value: "best", label: "BEST" },
+  { value: "free", label: "FREE" },
+  { value: "sold_out", label: "SOLD OUT" },
+  { value: "check", label: "Check" },
+  { value: "star", label: "Star" },
+  { value: "arrow_down", label: "Down arrow" },
+  { value: "percent", label: "Percent" },
+];
+
+/** The 9 position presets, as centre coordinates in percent. */
+export const POSITION_PRESETS: { label: string; x: number; y: number }[] = [
+  { label: "↖", x: 22, y: 14 },
+  { label: "↑", x: 50, y: 14 },
+  { label: "↗", x: 78, y: 14 },
+  { label: "←", x: 22, y: 50 },
+  { label: "•", x: 50, y: 50 },
+  { label: "→", x: 78, y: 50 },
+  { label: "↙", x: 22, y: 86 },
+  { label: "↓", x: 50, y: 86 },
+  { label: "↘", x: 78, y: 86 },
+];
+
+export function newOverlay(kind: OverlayKind): Overlay {
+  return {
+    kind,
+    x_pct: 50,
+    y_pct: kind === "text" ? 16 : 50,
+    scene_index: null,
+    start_sec: null,
+    end_sec: null,
+    fade_sec: 0.3,
+    color: kind === "text" ? "#FFFFFF" : "#FF3B5C",
+    opacity: 1,
+    text: kind === "text" ? "Your text" : "",
+    size_pct: kind === "text" ? 7 : 20,
+    background_box: false,
+    box_color: "#000000",
+    shape: "label_box",
+    width_pct: 45,
+    height_pct: 14,
+    thickness_pct: 0.8,
+    logo_id: null,
+    sticker: "new",
+    rotation_deg: 0,
+  };
+}
+
+export async function uploadLogo(file: File): Promise<{ logo_id: string }> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const r = await fetch("/api/assets/logo", { method: "POST", body: fd });
+  if (!r.ok) throw new Error(`Logo upload failed: ${r.status}`);
+  return r.json();
+}
+
 export const TRANSITIONS: { value: TransitionType; label: string }[] = [
   { value: "crossfade", label: "Crossfade (dissolve)" },
   { value: "fade", label: "Fade through black" },
@@ -101,6 +213,7 @@ export interface TopicPayload {
   caption_style: CaptionStyle;
   transition: TransitionSettings;
   motion: MotionSettings;
+  overlays: Overlay[];
 }
 
 export interface Scene {
@@ -132,6 +245,7 @@ export interface ScriptDraft {
   caption_style: CaptionStyle;
   transition: TransitionSettings;
   motion: MotionSettings;
+  overlays: Overlay[];
   mode: "topic" | "image" | "video";
   image_job_id: string | null;
   video_job_id: string | null;
@@ -208,6 +322,7 @@ export async function renderScript(draft: ScriptDraft): Promise<JobInfo> {
       caption_style: draft.caption_style,
       transition: draft.transition,
       motion: draft.motion,
+      overlays: draft.overlays ?? [],
       image_job_id: draft.image_job_id,
       video_job_id: draft.video_job_id,
     }),

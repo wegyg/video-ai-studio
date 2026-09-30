@@ -19,6 +19,7 @@ from app.models import (
     MotionSettings,
     MotionType,
     ImageRequest,
+    Overlay,
     JobInfo,
     JobStatus,
     Script,
@@ -26,8 +27,9 @@ from app.models import (
     TopicRequest,
     TransitionSettings,
 )
+from app.graphics import render_overlay_png
 from app.providers.registry import ProviderRegistry
-from app.render import Renderer, SceneClip
+from app.render import GraphicCue, Renderer, SceneClip
 
 # Tone -> accent color (used for caption accent bar / underline).
 TONE_ACCENT: dict[Tone, tuple[int, int, int]] = {
@@ -48,6 +50,50 @@ class Pipeline:
         """Stage 1 only: produce an editable script draft (no rendering)."""
         script_p = self.registry.script()
         return await script_p.generate(req)
+
+    def _attach_graphics(self, overlays: list[Overlay], scene_clips: list[SceneClip],
+                         job_dir: str, renderer: Renderer) -> None:
+        """Draw each overlay once, then cue it on every scene its window covers.
+
+        Scenes are rendered as separate clips, so an overlay spanning a boundary
+        has to be cued on each scene it touches, with times rebased to that
+        scene. Only the scene the overlay actually arrives in fades it in, and
+        only the one it leaves in fades it out — otherwise it would blink at
+        every boundary it crosses.
+        """
+        if not overlays:
+            return
+        durations = [c.duration for c in scene_clips]
+        starts, acc = [], 0.0
+        for d in durations:
+            starts.append(acc)
+            acc += d
+        total = acc
+
+        for oi, ov in enumerate(overlays):
+            png = os.path.join(job_dir, f"graphic_{oi}.png")
+            try:
+                drawn = render_overlay_png(ov, renderer.w, renderer.h, png, renderer.font)
+            except Exception:
+                drawn = None
+            if not drawn:
+                continue  # nothing to show (e.g. empty text, missing logo file)
+            g_start, g_end = ov.window(starts, durations, total)
+            for i, (s_start, s_dur) in enumerate(zip(starts, durations)):
+                s_end = s_start + s_dur
+                lo, hi = max(g_start, s_start), min(g_end, s_end)
+                if hi - lo <= 0.01:
+                    continue  # this scene is outside the overlay's window
+                scene_clips[i].graphics.append(
+                    GraphicCue(
+                        png_path=drawn,
+                        start=round(lo - s_start, 3),
+                        end=round(hi - s_start, 3),
+                        fade=min(ov.fade_sec, max(0.0, (hi - lo) / 2)),
+                        fade_in=abs(lo - g_start) < 0.01,
+                        fade_out=abs(hi - g_end) < 0.01,
+                    )
+                )
 
     async def run(
         self,
@@ -158,6 +204,14 @@ class Pipeline:
                     motion_intensity=(scene.motion_intensity or mset.intensity).value,
                 )
             )
+
+        # 2b) Graphic overlays -------------------------------------------
+        # Each scene occupies exactly its own duration on the finished timeline
+        # (transitions eat padding, not content), so a scene's start is just the
+        # durations before it. That lets an overlay's timeline window be split
+        # across scenes here, before anything is rendered.
+        self._attach_graphics(getattr(req, "overlays", None) or [], scene_clips,
+                              job_dir, renderer)
 
         # 3) Transition plan ---------------------------------------------
         # One entry per scene boundary. A scene may override the project default.

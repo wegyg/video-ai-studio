@@ -136,6 +136,7 @@ class TopicRequest(BaseModel):
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
     motion: MotionSettings = Field(default_factory=MotionSettings)
+    overlays: list[Overlay] = Field(default_factory=list)
 
 
 class ImageRequest(BaseModel):
@@ -152,7 +153,101 @@ class ImageRequest(BaseModel):
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
     motion: MotionSettings = Field(default_factory=MotionSettings)
+    overlays: list[Overlay] = Field(default_factory=list)
     # image file paths are attached by the API layer after upload
+
+
+class OverlayKind(str, Enum):
+    """What a graphic overlay is."""
+
+    TEXT = "text"        # a line of text, optionally on a background box
+    SHAPE = "shape"      # label box / arrow / circle / highlight bar
+    LOGO = "logo"        # an uploaded PNG
+    STICKER = "sticker"  # one of the built-in badges, drawn in code
+
+
+class ShapeKind(str, Enum):
+    LABEL_BOX = "label_box"          # rounded outline to frame part of the picture
+    ARROW = "arrow"                  # points at something
+    CIRCLE = "circle"                # rings a detail
+    HIGHLIGHT_BAR = "highlight_bar"  # solid bar to underline a claim
+
+
+class StickerPreset(str, Enum):
+    """Ten badges drawn with PIL. Nothing is fetched, so nothing is licensed."""
+
+    NEW = "new"
+    SALE = "sale"
+    HOT = "hot"
+    BEST = "best"
+    FREE = "free"
+    SOLD_OUT = "sold_out"
+    CHECK = "check"
+    STAR = "star"
+    ARROW_DOWN = "arrow_down"
+    PERCENT = "percent"
+
+
+# A graphic fades in and out over this long by default. Same ffmpeg `fade` family
+# the start/end fades use, so overlays feel like the rest of the edit.
+OVERLAY_FADE_SEC = 0.3
+
+
+class Overlay(BaseModel):
+    """A graphic laid over the video.
+
+    Position and size are percentages of the frame, never pixels, so the same
+    overlay lands in the same visual spot in 9:16, 1:1 and 16:9. `x_pct`/`y_pct`
+    are the CENTRE of the graphic, which is what makes the 9-grid presets line up.
+
+    Timing is either a scene (`scene_index`) or an explicit window on the finished
+    timeline (`start_sec`/`end_sec`). With neither, the overlay covers the whole
+    video.
+    """
+
+    kind: OverlayKind
+    # --- placement (percent of frame, centre-anchored) ---
+    x_pct: float = Field(50.0, ge=0.0, le=100.0)
+    y_pct: float = Field(50.0, ge=0.0, le=100.0)
+    # --- timing ---
+    scene_index: int | None = Field(None, ge=0)
+    start_sec: float | None = Field(None, ge=0.0)
+    end_sec: float | None = Field(None, ge=0.0)
+    fade_sec: float = Field(OVERLAY_FADE_SEC, ge=0.0, le=2.0)
+    # --- shared look ---
+    color: str = "#FFFFFF"        # hex, used for text / shape / sticker
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    # --- text ---
+    text: str = ""
+    size_pct: float = Field(6.0, gt=0.0, le=100.0)  # text height / sticker+logo width
+    background_box: bool = False   # draw a filled box behind the text
+    box_color: str = "#000000"
+    # --- shape ---
+    shape: ShapeKind = ShapeKind.LABEL_BOX
+    width_pct: float = Field(40.0, gt=0.0, le=100.0)
+    height_pct: float = Field(12.0, gt=0.0, le=100.0)
+    thickness_pct: float = Field(0.8, gt=0.0, le=20.0)  # stroke weight, % of frame width
+    # --- logo ---
+    # Clients send `logo_id`, handed out by the logo upload endpoint. The API
+    # turns it into `logo_path` itself and always overwrites whatever arrived in
+    # that field, so a request cannot point the renderer at an arbitrary file.
+    logo_id: str | None = None
+    logo_path: str | None = None
+    # --- sticker ---
+    sticker: StickerPreset = StickerPreset.NEW
+    # Turns the graphic about its centre. Mostly for arrows: the arrow is drawn
+    # pointing right, so 90 aims it down, 270 up.
+    rotation_deg: float = Field(0.0, ge=-360.0, le=360.0)
+
+    def window(self, scene_starts: list[float], scene_durations: list[float],
+               total: float) -> tuple[float, float]:
+        """Absolute (start, end) on the finished timeline."""
+        if self.scene_index is not None and self.scene_index < len(scene_starts):
+            i = self.scene_index
+            return scene_starts[i], scene_starts[i] + scene_durations[i]
+        start = self.start_sec if self.start_sec is not None else 0.0
+        end = self.end_sec if self.end_sec is not None else total
+        return start, max(start, end)
 
 
 class Scene(BaseModel):
@@ -192,6 +287,7 @@ class ScriptDraft(BaseModel):
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
     motion: MotionSettings = Field(default_factory=MotionSettings)
+    overlays: list[Overlay] = Field(default_factory=list)
     mode: str = "topic"  # "topic" | "image" | "video"
     image_job_id: str | None = None  # references uploaded images for image mode
     video_job_id: str | None = None  # references uploaded footage for video mode
@@ -209,6 +305,7 @@ class RenderRequest(BaseModel):
     caption_style: CaptionStyle = CaptionStyle.POP
     transition: TransitionSettings = Field(default_factory=TransitionSettings)
     motion: MotionSettings = Field(default_factory=MotionSettings)
+    overlays: list[Overlay] = Field(default_factory=list)
     image_job_id: str | None = None  # reuse images uploaded during image-mode script gen
     video_job_id: str | None = None  # reuse footage uploaded during video-mode script gen
 

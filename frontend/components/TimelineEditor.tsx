@@ -1,18 +1,31 @@
 "use client";
 
-import { Scene, Script, TRANSITIONS, TransitionType } from "@/lib/api";
+import {
+  MOTIONS,
+  MOTION_INTENSITIES,
+  MotionIntensity,
+  MotionType,
+  Scene,
+  Script,
+  TRANSITIONS,
+  TransitionType,
+} from "@/lib/api";
 
 interface Props {
   script: Script;
   onChange: (script: Script) => void;
   /** Project-wide transition, shown as the "default" option on each boundary. */
   defaultTransition?: TransitionType;
+  defaultMotion?: MotionType;
+  defaultMotionIntensity?: MotionIntensity;
 }
 
 export default function TimelineEditor({
   script,
   onChange,
   defaultTransition = "crossfade",
+  defaultMotion = "auto",
+  defaultMotionIntensity = "medium",
 }: Props) {
   const scenes = script.scenes;
 
@@ -132,6 +145,50 @@ export default function TimelineEditor({
                 />
                 <span className="pr-1 text-xs text-white/40">s</span>
               </div>
+            </div>
+
+            {/* per-scene camera movement; blank = follow the project default */}
+            <div className="mt-2 flex gap-2">
+              <select
+                aria-label={`Camera motion for scene ${i + 1}`}
+                value={s.motion ?? ""}
+                onChange={(e) =>
+                  update(i, { motion: (e.target.value || null) as MotionType | null })
+                }
+                className="flex-1 rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white/60 outline-none focus:border-brand"
+                title="How the camera moves across this scene"
+              >
+                <option value="" className="bg-[#161226]">
+                  ✨ Motion: default ({MOTIONS.find((m) => m.value === defaultMotion)?.label ?? defaultMotion})
+                </option>
+                {MOTIONS.map((m) => (
+                  <option key={m.value} value={m.value} className="bg-[#161226]">
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label={`Motion strength for scene ${i + 1}`}
+                value={s.motion_intensity ?? ""}
+                onChange={(e) =>
+                  update(i, {
+                    motion_intensity: (e.target.value || null) as MotionIntensity | null,
+                  })
+                }
+                disabled={(s.motion ?? defaultMotion) === "none"}
+                className="w-28 rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white/60 outline-none focus:border-brand disabled:opacity-40"
+                title="Movement strength for this scene"
+              >
+                <option value="" className="bg-[#161226]">
+                  {MOTION_INTENSITIES.find((m) => m.value === defaultMotionIntensity)?.label ??
+                    defaultMotionIntensity}
+                </option>
+                {MOTION_INTENSITIES.map((m) => (
+                  <option key={m.value} value={m.value} className="bg-[#161226]">
+                    {m.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

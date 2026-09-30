@@ -45,6 +45,40 @@ export interface TransitionSettings {
   fade_out: boolean;
 }
 
+export type MotionType =
+  | "none"
+  | "zoom_in"
+  | "zoom_out"
+  | "pan_left"
+  | "pan_right"
+  | "pan_up"
+  | "pan_down"
+  | "auto";
+
+export type MotionIntensity = "weak" | "medium" | "strong";
+
+export interface MotionSettings {
+  type: MotionType;
+  intensity: MotionIntensity;
+}
+
+export const MOTIONS: { value: MotionType; label: string }[] = [
+  { value: "auto", label: "Auto (varies each scene)" },
+  { value: "zoom_in", label: "Zoom in (Ken Burns)" },
+  { value: "zoom_out", label: "Zoom out" },
+  { value: "pan_left", label: "Pan left" },
+  { value: "pan_right", label: "Pan right" },
+  { value: "pan_up", label: "Pan up" },
+  { value: "pan_down", label: "Pan down" },
+  { value: "none", label: "Still (no movement)" },
+];
+
+export const MOTION_INTENSITIES: { value: MotionIntensity; label: string }[] = [
+  { value: "weak", label: "Subtle" },
+  { value: "medium", label: "Medium" },
+  { value: "strong", label: "Strong" },
+];
+
 export const TRANSITIONS: { value: TransitionType; label: string }[] = [
   { value: "crossfade", label: "Crossfade (dissolve)" },
   { value: "fade", label: "Fade through black" },
@@ -66,6 +100,7 @@ export interface TopicPayload {
   aspect_ratio: AspectRatio;
   caption_style: CaptionStyle;
   transition: TransitionSettings;
+  motion: MotionSettings;
 }
 
 export interface Scene {
@@ -75,6 +110,9 @@ export interface Scene {
   duration_sec: number;
   /** Transition INTO the next scene. null = use the project default. */
   transition?: TransitionType | null;
+  /** Camera movement for this scene. null = use the project default. */
+  motion?: MotionType | null;
+  motion_intensity?: MotionIntensity | null;
 }
 
 export interface Script {
@@ -93,6 +131,7 @@ export interface ScriptDraft {
   aspect_ratio: AspectRatio;
   caption_style: CaptionStyle;
   transition: TransitionSettings;
+  motion: MotionSettings;
   mode: "topic" | "image" | "video";
   image_job_id: string | null;
   video_job_id: string | null;
@@ -168,6 +207,7 @@ export async function renderScript(draft: ScriptDraft): Promise<JobInfo> {
       aspect_ratio: draft.aspect_ratio,
       caption_style: draft.caption_style,
       transition: draft.transition,
+      motion: draft.motion,
       image_job_id: draft.image_job_id,
       video_job_id: draft.video_job_id,
     }),

@@ -11,10 +11,13 @@ import os
 
 from app.config import Settings
 from app.models import (
+    AUTO_MOTION_CYCLE,
     TRANSITION_MAX_SEC,
     TRANSITION_MIN_SEC,
     AspectRatio,
     CaptionStyle,
+    MotionSettings,
+    MotionType,
     ImageRequest,
     JobInfo,
     JobStatus,
@@ -91,6 +94,15 @@ class Pipeline:
 
         n = len(script.scenes)
         scene_clips: list[SceneClip] = []
+        # Camera movement: scene override > project default. AUTO walks a cycle so
+        # neighbouring scenes never move the same way.
+        mset: MotionSettings = getattr(req, "motion", None) or MotionSettings()
+
+        def motion_for(index: int) -> MotionType:
+            chosen = script.scenes[index].motion or mset.type
+            if chosen is MotionType.AUTO:
+                return AUTO_MOTION_CYCLE[index % len(AUTO_MOTION_CYCLE)]
+            return chosen
 
         # 2) Per-scene visuals + narration -------------------------------
         for i, scene in enumerate(script.scenes):
@@ -142,6 +154,8 @@ class Pipeline:
                     is_hook=(i == 0),
                     kind=asset.kind,
                     caption_style=caption_style.value,
+                    motion=motion_for(i).value,
+                    motion_intensity=(scene.motion_intensity or mset.intensity).value,
                 )
             )
 

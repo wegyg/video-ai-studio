@@ -59,9 +59,13 @@ class VisualsProvider(ABC):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
+        tone: str = "",
     ) -> VisualAsset:
         """Return a VisualAsset. `out_path` is a suggested path (extension may
-        change for video). Providers should always produce SOMETHING usable."""
+        change for video). Providers should always produce SOMETHING usable.
+
+        `tone` lets a provider match the requested mood (the offline gradient
+        provider uses it to pick its colours)."""
         ...
 
 

@@ -4,6 +4,7 @@ set -e
 cd "$(dirname "$0")"
 bash ../scripts/setup_python.sh
 bash ../scripts/setup_ffmpeg.sh
+bash ../scripts/setup_fonts.sh   # CJK glyphs for Korean/Japanese/Chinese captions
 bash run_server.sh > /projects/sandbox/backend.log 2>&1 &
 SRV=$!
 # wait for readiness

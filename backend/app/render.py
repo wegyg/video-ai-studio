@@ -403,6 +403,70 @@ class Renderer:
         os.remove(list_file)
         return out_path
 
+    async def build_narration(
+        self,
+        segments: list[tuple[float, str | None]],
+        total: float,
+        out_path: str,
+    ) -> str:
+        """Lay each scene's narration at its own start time on the timeline.
+
+        `segments` is [(start_sec, audio_path)] — start_sec is where that scene's
+        VIDEO begins. Concatenating the clips back-to-back (the old behaviour)
+        drifts, because every scene's video is longer than its narration (scene
+        duration = max(script, spoken + 0.6s)), so the voice creeps ahead of the
+        captions by the accumulated padding. Placing each segment absolutely
+        keeps voice, captions and visuals locked together.
+
+        A 60ms fade on both ends of every segment removes the click you get from
+        cutting into/out of a waveform mid-cycle. The result is padded with
+        silence to exactly `total` so the audio and video lengths match.
+        """
+        valid = [(max(0.0, s), p) for s, p in segments if p and os.path.exists(p)]
+        total = max(total, 0.1)
+        if not valid:
+            await _run([
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", f"{total:.3f}", "-c:a", "aac", out_path,
+            ])
+            return out_path
+
+        inputs: list[str] = []
+        chains: list[str] = []
+        labels: list[str] = []
+        fade = 0.06
+        for i, (start, path) in enumerate(valid):
+            dur = await _probe_duration(path)
+            inputs += ["-i", path]
+            # normalise format first: segments can be mp3/m4a at different rates
+            chain = (
+                f"[{i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                f"afade=t=in:st=0:d={fade}"
+            )
+            if dur > 2 * fade:
+                chain += f",afade=t=out:st={dur - fade:.3f}:d={fade}"
+            if start > 0:
+                ms = int(round(start * 1000))
+                chain += f",adelay={ms}|{ms}"
+            chain += f"[a{i}]"
+            chains.append(chain)
+            labels.append(f"[a{i}]")
+
+        if len(labels) == 1:
+            mixed = f"{labels[0]}apad[mix]"
+        else:
+            mixed = (
+                "".join(labels)
+                + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0:duration=longest,apad[mix]"
+            )
+        fc = ";".join(chains + [mixed])
+        await _run([
+            "ffmpeg", "-y", *inputs,
+            "-filter_complex", fc, "-map", "[mix]",
+            "-t", f"{total:.3f}", "-c:a", "aac", out_path,
+        ])
+        return out_path
+
     async def mux(
         self, video_path: str, audio_path: str, out_path: str, music_path: str | None = None
     ) -> str:

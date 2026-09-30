@@ -158,9 +158,21 @@ class Pipeline:
         silent_video = os.path.join(job_dir, "video_silent.mp4")
         await renderer.concat_video(rendered, silent_video)
 
+        # Narration is placed at each scene's real start time (measured from the
+        # rendered clips, so frame quantisation can't drift) instead of being
+        # concatenated back-to-back, which used to pull the voice ahead of the
+        # captions by the per-scene padding.
+        from app.render import _probe_duration as _probe_clip
+
+        starts: list[float] = []
+        acc = 0.0
+        for path in rendered:
+            starts.append(acc)
+            acc += await _probe_clip(path)
+
         merged_audio = os.path.join(job_dir, "narration.m4a")
-        await renderer.concat_audio(
-            [c.audio_path or "" for c in scene_clips], merged_audio
+        await renderer.build_narration(
+            list(zip(starts, [c.audio_path for c in scene_clips])), acc, merged_audio
         )
 
         job.progress = 95

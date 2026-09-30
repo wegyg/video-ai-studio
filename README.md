@@ -36,6 +36,12 @@ add API keys.
   repeats back to back), at three strengths, set per project or per scene. The background is covered
   above the output size first, so a pan always has real pixels to move into and never exposes a black
   edge in any aspect ratio; stock video gets a lighter touch since the footage already moves
+- **Graphic overlays** — text (with an optional background box), shapes (label box, arrow, circle
+  highlight, highlight bar), your uploaded logo, and ten built-in stickers (NEW / SALE / HOT / BEST /
+  FREE / SOLD OUT / check / star / down arrow / percent) drawn in code, so no licensed artwork is
+  involved. Each one sits on a single scene or a time range, fades in and out, and is positioned in
+  percentages — from the 9-grid presets or exact numbers — so it lands in the same spot in every
+  aspect ratio
   + narration + optional background music.
 - **Next.js UI** with live job progress and in-browser video preview + download.
 

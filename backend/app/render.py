@@ -745,6 +745,9 @@ class Renderer:
                 f"[2:a]volume=0.18[m];[1:a][m]amix=inputs=2:duration=first{afades}[a]",
                 "-map", "0:v", "-map", "[a]",
                 "-c:v", "copy", "-c:a", "aac",
+                # moov atom up front so a phone or browser can start playing
+                # before the whole file has arrived
+                "-movflags", "+faststart",
                 "-t", f"{vdur}", "-shortest", out_path,
             ]
         elif afades:
@@ -753,6 +756,7 @@ class Renderer:
                 "-filter_complex", f"[1:a]anull{afades}[a]",
                 "-map", "0:v", "-map", "[a]",
                 "-c:v", "copy", "-c:a", "aac",
+                "-movflags", "+faststart",
                 "-t", f"{vdur}", out_path,
             ]
         else:
@@ -760,6 +764,7 @@ class Renderer:
                 "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "copy", "-c:a", "aac",
+                "-movflags", "+faststart",
                 "-t", f"{vdur}", out_path,
             ]
         await _run(cmd)

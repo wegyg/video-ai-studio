@@ -33,11 +33,24 @@ class AspectRatio(str, Enum):
     LANDSCAPE = "16:9"   # YouTube
 
     def dimensions(self, base: int = 1080) -> tuple[int, int]:
+        """Output size for this ratio, both sides even.
+
+        yuv420p subsamples chroma by two, so libx264 refuses an odd width or
+        height. Most bases divide cleanly — 1080 gives 1920, 720 gives 1280 — but
+        480 works out to 853.33 and truncating that produced an odd 853 and a
+        render that died with "Generic error in an external library". Rounding to
+        the nearest even number keeps any base usable.
+        """
+        def even(value: float) -> int:
+            return max(2, round(value / 2) * 2)
+
+        long_side = even(base * 16 / 9)
+        base = even(base)
         if self is AspectRatio.VERTICAL:
-            return base, int(base * 16 / 9)   # 1080 x 1920
+            return base, long_side            # 1080 x 1920
         if self is AspectRatio.SQUARE:
             return base, base                 # 1080 x 1080
-        return int(base * 16 / 9), base       # 1920 x 1080
+        return long_side, base                # 1920 x 1080
 
 
 class CaptionStyle(str, Enum):

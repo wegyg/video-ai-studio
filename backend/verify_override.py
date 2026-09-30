@@ -57,6 +57,10 @@ async def render(tag: str, override: TransitionType | None, edge: bool) -> tuple
     from the script instead of assumed."""
     settings = get_settings()
     settings.tts_provider = "silent"
+    # Pin the background provider: with a PEXELS_API_KEY present the registry
+    # would hand back real footage, and every measurement here assumes the
+    # offline gradient. Results have to be reproducible with or without a key.
+    settings.visuals_provider = "gradient"
     pipe = Pipeline(settings)
     script = make_script(override)
     req = TopicRequest(

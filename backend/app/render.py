@@ -11,10 +11,12 @@ Strategy (kept robust across ffmpeg builds):
 from __future__ import annotations
 
 import asyncio
+import glob
 import os
 import re
 import subprocess
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -31,7 +33,13 @@ from PIL import Image, ImageDraw, ImageFont
 # the grid at 0.25px and the movement lands on a new position every frame.
 # Measured on the verification grid: smoothness (min/mean frame delta) on a
 # subtle pan went 0.19 -> 0.68, for about 30% more time on a 3-scene render.
-UPSCALE = 4
+#
+# Overridable because a small host may not have the memory for it. Note that
+# lowering it saves far less than you would think: measured on one 1080x1920
+# scene, 4x peaked at 747 MB and 2x still peaked at 709 MB. Output resolution is
+# what actually drives memory (see VIDEO_BASE_HEIGHT), so prefer lowering that
+# and leaving this at 4, which keeps slow pans smooth.
+UPSCALE = int(os.environ.get("MOTION_UPSCALE", "4"))
 
 # Motion strength: (zoom factor, pan travel as a fraction of the upscaled frame).
 MOTION_STRENGTH = {
@@ -798,14 +806,37 @@ _LATIN_FONTS = [
 # Korean, Japanese and Chinese need a font that actually carries those glyphs.
 # The Latin fonts above do not: PIL draws a "tofu" box per character instead, so
 # a Korean caption came out as a row of empty rectangles.
-_CJK_FONTS = [
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/nanum/NanumGothicBold.ttf",
-    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+#
+# Searched by pattern rather than by exact path, because the path differs per
+# distribution and a fixed list silently falls back to Latin (i.e. back to tofu)
+# the moment it is wrong. Debian's fonts-noto-cjk, for one, installs only the
+# Regular face under opentype/noto, while Amazon Linux uses google-noto-cjk.
+_CJK_FONT_GLOBS = [
+    "/usr/share/fonts/**/NotoSansCJK*.ttc",
+    "/usr/share/fonts/**/NotoSansCJK*.otf",
+    "/usr/share/fonts/**/NotoSansKR*.otf",
+    "/usr/share/fonts/**/NotoSansKR*.ttf",
+    "/usr/share/fonts/**/NanumGothic*.ttf",
+    "/usr/local/share/fonts/**/*CJK*.ttc",
+    # macOS and Windows, for local development
+    "/System/Library/Fonts/**/AppleSDGothicNeo*.ttc",
+    "/Library/Fonts/**/AppleGothic*.ttf",
+    "C:/Windows/Fonts/malgun*.ttf",
 ]
+
+
+@lru_cache(maxsize=1)
+def _cjk_font() -> str:
+    """First installed font able to draw CJK text, preferring a bold face."""
+    found: list[str] = []
+    for pattern in _CJK_FONT_GLOBS:
+        found.extend(glob.glob(pattern, recursive=True))
+    if not found:
+        return ""
+    # Bold reads better over footage; otherwise take the shortest path, which
+    # tends to be the plain family rather than a variant.
+    found.sort(key=lambda p: (0 if "bold" in p.lower() else 1, len(p)))
+    return found[0]
 
 # Hangul, kana, and CJK ideographs — enough to decide which font a line needs.
 _CJK_RE = re.compile(
@@ -821,9 +852,11 @@ def _find_font(text: str = "") -> str:
     only reached for when the text actually contains CJK characters, and falls
     back to Latin if no CJK font is installed.
     """
-    groups = [_CJK_FONTS, _LATIN_FONTS] if text and _CJK_RE.search(text) else [_LATIN_FONTS]
-    for group in groups:
-        for c in group:
-            if os.path.exists(c):
-                return c
+    if text and _CJK_RE.search(text):
+        cjk = _cjk_font()
+        if cjk:
+            return cjk
+    for c in _LATIN_FONTS:
+        if os.path.exists(c):
+            return c
     return ""  # ffmpeg will use its built-in default

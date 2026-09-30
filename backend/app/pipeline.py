@@ -128,7 +128,7 @@ class Pipeline:
 
         # Per-request output dimensions + caption style.
         ratio = getattr(req, "aspect_ratio", None) or AspectRatio.VERTICAL
-        w, h = ratio.dimensions(base=1080)
+        w, h = ratio.dimensions(base=self.s.video_base_height)
         caption_style = getattr(req, "caption_style", None) or CaptionStyle.POP
         renderer = Renderer(w, h, self.s.video_fps)
 

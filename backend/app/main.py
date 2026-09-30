@@ -38,8 +38,14 @@ app = FastAPI(title="Video AI Studio", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
+    # Set CORS_ORIGINS to your site (comma separated) in production; the
+    # wildcard is the local-development default.
     allow_origins=settings.cors_origin_list or ["*"],
-    allow_credentials=True,
+    # No cookies or Authorization headers are used anywhere in this API. Asking
+    # for credentials alongside a "*" origin is invalid per the CORS spec and
+    # browsers reject the response outright, so a deployment that had not set
+    # CORS_ORIGINS yet would fail every cross-origin call.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -115,7 +121,13 @@ async def health():
     return {
         "status": "ok",
         "providers": pipeline.registry.summary(),
-        "resolution": f"{settings.video_width}x{settings.video_height}@{settings.video_fps}",
+        # Reported from the real setting, per ratio. The old fixed pair claimed
+        # 1080x1920 even when rendering 1:1 or 16:9.
+        "resolution": {
+            r.value: "x".join(map(str, r.dimensions(base=settings.video_base_height)))
+            for r in AspectRatio
+        },
+        "fps": settings.video_fps,
     }
 
 

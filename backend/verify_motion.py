@@ -136,7 +136,7 @@ class PatternVisualProvider(VisualsProvider):
 
     async def get_visual(self, query: str, out_path: str, *, width: int, height: int,
                          existing_images: list[str] | None = None,
-                         index: int = 0, tone: str = "") -> VisualAsset:
+                         index: int = 0) -> VisualAsset:
         def _run() -> None:
             img = Image.new("RGB", (width, height), (250, 250, 252))
             d = ImageDraw.Draw(img)

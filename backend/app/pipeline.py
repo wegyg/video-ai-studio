@@ -164,7 +164,6 @@ class Pipeline:
                 scene.visual_query, img_path,
                 width=w, height=h,
                 existing_images=image_paths, index=i,
-                tone=getattr(req.tone, "value", "") or "",
             )
 
             # Premium: animate the (product) still into a real AI clip.

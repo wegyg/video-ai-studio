@@ -77,21 +77,26 @@ def scene(text: str, secs: float, *, transition: TransitionType | None = None,
                  duration_sec=secs, transition=transition, motion=motion)
 
 
-# What each line should look like. Used as the stock-footage search term when a
-# Pexels key is configured, and as the gradient seed when it is not.
+# Stock-footage search term per line. Kept to the six approved terms so the
+# footage stays on-brief: physiotherapy, posture, spine, wellness clinic,
+# stretching, foot care. Used as the Pexels query when a key is configured, and
+# as the gradient seed when it is not.
 _VISUAL = {
-    "혹시 거북목인가요": "office worker neck pain posture",
-    "어깨가 자주 뭉치나요": "shoulder tension massage clinic",
-    "원인부터 찾습니다": "physiotherapist spine examination",
-    "일대일 맞춤 교정": "physical therapist one on one treatment",
-    "첫 검사 무료입니다": "friendly clinic reception desk",
-    "골반이 틀어졌나요": "pelvis alignment physiotherapy",
-    "전문 교정사와 함께": "chiropractor professional clinic",
-    "자세 검사는 무료": "posture assessment clinic",
-    "바른 자세로 바뀝니다": "healthy posture stretching",
-    "통증 없이 편하게": "relaxed patient physiotherapy",
-    "십년 경력 전문가": "experienced doctor portrait clinic",
-    "지금 예약하세요": "smiling woman healthy back",
+    # demo_transition
+    "혹시 거북목인가요": "posture",
+    "어깨가 자주 뭉치나요": "physiotherapy",
+    "원인부터 찾습니다": "spine",
+    "일대일 맞춤 교정": "wellness clinic",
+    "첫 검사 무료입니다": "wellness clinic",
+    # demo_panning
+    "골반이 틀어졌나요": "spine",
+    "전문 교정사와 함께": "physiotherapy",
+    "자세 검사는 무료": "posture",
+    "바른 자세로 바뀝니다": "stretching",
+    # demo_graphics
+    "통증 없이 편하게": "wellness clinic",
+    "십년 경력 전문가": "physiotherapy",
+    "지금 예약하세요": "foot care",
 }
 
 

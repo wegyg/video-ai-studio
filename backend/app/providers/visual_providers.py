@@ -20,37 +20,12 @@ from app.config import Settings
 from app.providers.base import VisualAsset, VisualsProvider
 
 
-# Hue range (degrees), lightness and saturation per tone. The tone is the whole
-# point of the setting, so the background has to agree with it: a professional or
-# luxury promo asking for trust cannot open on a hot pink card, which is what
-# hashing the query alone used to produce.
-_TONE_PALETTE: dict[str, tuple[int, int, float, float]] = {
-    # tone:          hue_lo, hue_hi, lightness, saturation
-    "professional": (196, 248, 0.30, 0.55),  # navy through teal
-    "luxury":       (34, 46, 0.22, 0.45),    # gold on near-black
-    "energetic":    (348, 382, 0.42, 0.68),  # red into orange (wraps past 360)
-    "friendly":     (28, 52, 0.40, 0.62),    # warm amber
-    "playful":      (272, 320, 0.44, 0.66),  # purple into pink
-}
-_TONE_FALLBACK = (200, 232, 0.34, 0.55)
-
-
-def _seed_color(query: str, tone: str = "") -> tuple[tuple[int, int, int], tuple[int, int, int]]:
-    """A 2-colour gradient that suits `tone`, varied deterministically by `query`.
-
-    The tone fixes the hue band, lightness and saturation; the query only moves
-    the hue inside that band. So scenes still differ from one another while the
-    whole video keeps the mood the caller asked for.
-    """
-    lo, hi, light, sat = _TONE_PALETTE.get((tone or "").lower(), _TONE_FALLBACK)
+def _seed_color(query: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Deterministically derive a pleasant 2-color gradient from the query."""
     h = int(hashlib.md5(query.encode()).hexdigest(), 16)
-    hue = (lo + (h % max(1, hi - lo))) % 360 / 360.0
-    # Vary brightness per scene as well as hue. Within one tone the hues are
-    # close together by design, and without this neighbouring scenes came out so
-    # alike that a crossfade between them was almost invisible.
-    light = min(0.6, max(0.12, light + (((h >> 16) % 13) - 6) / 100.0))
-    c1 = colorsys.hls_to_rgb(hue, light, sat)
-    c2 = colorsys.hls_to_rgb((hue + 0.04) % 1.0, max(0.08, light - 0.16), sat)
+    hue = (h % 360) / 360.0
+    c1 = colorsys.hls_to_rgb(hue, 0.45, 0.65)
+    c2 = colorsys.hls_to_rgb((hue + 0.08) % 1.0, 0.25, 0.7)
     to255 = lambda c: tuple(int(x * 255) for x in c)  # noqa: E731
     return to255(c1), to255(c2)
 
@@ -99,10 +74,9 @@ class GradientVisualProvider(VisualsProvider):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
-        tone: str = "",
     ) -> VisualAsset:
         def _run() -> None:
-            top, bottom = _seed_color(query, tone)
+            top, bottom = _seed_color(query)
             canvas = _draw_gradient(width, height, top, bottom)
 
             # image-to-video mode: composite an uploaded product photo, cover-fit.
@@ -150,11 +124,10 @@ class UserVideoProvider(VisualsProvider):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
-        tone: str = "",
     ) -> VisualAsset:
         if not self._clips:
             return await self._fallback.get_visual(
-                query, out_path, width=width, height=height, index=index, tone=tone
+                query, out_path, width=width, height=height, index=index
             )
         src = self._clips[index % len(self._clips)]
         clip = out_path + ".uclip.mp4"
@@ -163,7 +136,7 @@ class UserVideoProvider(VisualsProvider):
             return VisualAsset(path=clip, kind="video")
         except Exception:
             return await self._fallback.get_visual(
-                query, out_path, width=width, height=height, index=index, tone=tone
+                query, out_path, width=width, height=height, index=index
             )
 
 
@@ -183,7 +156,6 @@ class PexelsVisualProvider(VisualsProvider):
         height: int,
         existing_images: list[str] | None = None,
         index: int = 0,
-        tone: str = "",
     ) -> VisualAsset:
         if existing_images:  # honor uploaded product photos in image mode
             return await self._fallback.get_visual(

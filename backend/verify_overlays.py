@@ -63,7 +63,7 @@ class FlatVisualProvider(VisualsProvider):
 
     async def get_visual(self, query: str, out_path: str, *, width: int, height: int,
                          existing_images: list[str] | None = None,
-                         index: int = 0, tone: str = "") -> VisualAsset:
+                         index: int = 0) -> VisualAsset:
         Image.new("RGB", (width, height), (96, 96, 100)).save(out_path, "JPEG", quality=92)
         return VisualAsset(path=out_path, kind="image")
 

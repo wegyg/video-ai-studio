@@ -1,7 +1,8 @@
 # Customer demo clips
 
-Three 15-second 9:16 clips for a posture-correction clinic, Korean narration and
-captions, professional tone, background music. One per Phase 4 feature.
+Three 15-second 9:16 clips for a posture-correction clinic: Korean narration and
+captions, professional tone, stock footage backgrounds, background music. One clip
+per Phase 4 feature.
 
 | clip | shows |
 |---|---|
@@ -9,31 +10,38 @@ captions, professional tone, background music. One per Phase 4 feature.
 | `demo_panning.mp4` | a different camera motion per scene — zoom in, pan left, pan up, auto |
 | `demo_graphics.mp4` | text box, circle highlight, logo and a NEW sticker together |
 
-All three are H.264 / AAC with the moov atom at the front, so they start playing
-on a phone without downloading the whole file first.
+All three are H.264 / AAC with the moov atom at the front, so they start playing on
+a phone without downloading the whole file first.
 
-Rebuild them with:
+Rebuild with:
 
 ```bash
-cd backend
-.venv/bin/python make_demos.py            # all three
-.venv/bin/python make_demos.py --only graphics --sheets
+cd backend            # needs PEXELS_API_KEY in backend/.env
+.venv/bin/python make_demos.py --sheets
 ```
 
 `make_demos.py` fails if any clip does not land on 15s, since scene length depends
 on how long the narration turns out to be.
 
-## Why the backgrounds are gradients
+## Why the stock clips are pinned by id
 
-No Pexels API key is configured, so the stock-footage provider falls back to
-generated gradient cards. Two consequences worth knowing:
+Searching Pexels returns a different clip per scene index with no regard for what
+is actually in it. On the approved search terms — physiotherapy, posture, spine,
+wellness clinic, stretching, foot care — that produced bare-skin massage
+close-ups and near-nude figures: unusable for a clinic promo, and in one case the
+circle highlight landed on a semi-nude torso.
 
-- **`demo_panning.mp4` does not really demonstrate panning.** A smooth gradient has
-  almost no detail for the camera to move across, so the motion is hard to see.
-  The feature itself is measured frame by frame in
-  `../verification/step4-2-motion/`.
-- Backgrounds are tone-coloured (navy/teal here for a professional tone) rather
-  than photographic.
+Clips are therefore pinned by Pexels id, chosen by eye from the candidates for
+those same terms. `CLIP_SOURCE` in `make_demos.py` records which term each id came
+from and why it was picked, and pinning also makes a re-render reproducible.
 
-Set `PEXELS_API_KEY` and re-run `make_demos.py` to get the same three clips over
-real footage — no code change needed.
+Footage is from [Pexels](https://www.pexels.com/license/), free to use.
+
+## Camera motion on footage
+
+Motion is capped to the lightest strength on video backgrounds — footage already
+moves, so the camera does not need to. That cap is deliberate and it is enough
+here: the start/end frames in `pan_startend.jpg` (regenerate with the snippet in
+the PR) show zoom, pan left, pan up and auto all clearly displacing the frame,
+because real footage has detail for the camera to travel across. Earlier gradient
+backgrounds did not, which is why panning was invisible against them.
